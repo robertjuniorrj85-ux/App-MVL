@@ -1,0 +1,17 @@
+{
+  "name": "MVL - Ministério Vasos de Louvores",
+  "short_name": "MVL",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#090909",
+  "theme_color": "#090909",
+  "description": "Aplicativo do Ministério Vasos de Louvores",
+  "icons": [
+    {
+      "src": "assets/logo-mvl.jpg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ]
+}
