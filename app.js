@@ -1,7 +1,36 @@
+
 let deferredPrompt=null;
-const installButtons=()=>document.querySelectorAll('.install-trigger');
-window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;});
-async function installApp(){if(deferredPrompt){deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null}else{alert('No Android/Chrome: toque no menu ⋮ e escolha “Instalar app” ou “Adicionar à tela inicial”. No iPhone: Compartilhar → “Adicionar à Tela de Início”.')}}
-installButtons().forEach(b=>b.onclick=installApp);
+const installButtons=[...document.querySelectorAll('.install-trigger')];
+
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  deferredPrompt=e;
+  installButtons.forEach(btn=>btn.style.display='flex');
+});
+
+async function instalar(){
+  if(!deferredPrompt) return;
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice;
+  deferredPrompt=null;
+  installButtons.forEach(btn=>btn.style.display='none');
+}
+
+installButtons.forEach(btn=>btn.addEventListener('click',instalar));
+
+window.addEventListener('appinstalled',()=>{
+  deferredPrompt=null;
+  installButtons.forEach(btn=>btn.style.display='none');
+});
+
 document.getElementById('demo').onclick=()=>{document.getElementById('login').classList.add('hide');document.getElementById('app').classList.remove('hide')};
-if('serviceWorker'in navigator)navigator.serviceWorker.register('./sw.js');
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js').then(reg=>reg.update()).catch(()=>{}));
+  navigator.serviceWorker.addEventListener('controllerchange',()=>{
+    if(!sessionStorage.getItem('swReloaded')){
+      sessionStorage.setItem('swReloaded','1');
+      location.reload();
+    }
+  });
+}
