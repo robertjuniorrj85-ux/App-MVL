@@ -278,7 +278,59 @@ function renderDayEvents(events){const el=$('day-events');el.innerHTML=`<h3>${da
 async function renderCommunication(){
   showSectionHeader('Comunicação','Mensagens privadas entre integrantes e liderança.');adminPanel.classList.remove('hide');$('form-title').textContent=isAdmin?'Nova mensagem':'Enviar mensagem à liderança';dynamicForm.innerHTML=`<div class="form-grid"><select id="msg-type"><option>Falta / ausência</option><option>Dúvida</option><option>Pedido</option><option>Observação</option><option>Outro</option></select><textarea id="msg-body" placeholder="Escreva sua mensagem"></textarea></div>`;saveBtn.onclick=sendMessage;await loadMessages();
 }
-async function sendMessage(){const tipo=$('msg-type').value,mensagem=$('msg-body').value.trim();if(!mensagem){alert('Escreva a mensagem.');return;}try{await addDoc(collection(db,'mensagens'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,autorEmail:currentUser.email,tipo,mensagem,status:'nova',criadoEm:serverTimestamp()});if(!isAdmin){const admins=usersCache.filter(u=>u.role==='admin').map(u=>u.id);if(admins.length)await createNotifications(admins,'Nova mensagem à liderança',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,140)}`,'mensagem','');}$('msg-body').value='';alert('Mensagem enviada.');await loadMessages();}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
+async function sendMessage() {
+  const tipo = $('msg-type').value;
+  const mensagem = $('msg-body').value.trim();
+
+  if (!mensagem) {
+    alert('Escreva a mensagem.');
+    return;
+  }
+
+  try {
+    await addDoc(collection(db, 'mensagens'), {
+      autorId: currentUser.uid,
+      autorNome: currentUserData.nome || currentUser.email,
+      autorEmail: currentUser.email,
+      tipo,
+      mensagem,
+      status: 'nova',
+      criadoEm: serverTimestamp()
+    });
+
+    if (!isAdmin) {
+      const admins = usersCache
+        .filter(u => u.role === 'admin')
+        .map(u => u.id);
+
+      if (admins.length) {
+        await createNotifications(
+          admins,
+          'Nova mensagem à liderança',
+          `${currentUserData.nome || currentUser.email}: ${mensagem.slice(0, 140)}`,
+          'mensagem',
+          ''
+        );
+      }
+
+      await enviarPushMVL(
+        'mensagem_admin',
+        'Nova mensagem no MVL',
+        `${currentUserData.nome || currentUser.email}: ${mensagem.slice(0, 140)}`
+      );
+    }
+
+    $('msg-body').value = '';
+
+    alert('Mensagem enviada.');
+
+    await loadMessages();
+
+  } catch (e) {
+    console.error(e);
+    alert('Não foi possível enviar a mensagem.');
+  }
+}
 async function loadMessages(){const all=await safeDocs('mensagens'),visible=(isAdmin?all:all.filter(m=>m.autorId===currentUser.uid)).sort(byCreatedDesc);listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhuma mensagem ainda.</div>';return;}visible.forEach(m=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<span class="status-pill ${m.status==='nova'?'new':m.status==='resolvida'?'done':''}">${escapeHtml(m.status||'nova')}</span><h3>${escapeHtml(m.tipo||'Mensagem')}</h3>${isAdmin?`<div class="item-meta"><b>De:</b> ${escapeHtml(m.autorNome||m.autorEmail||'')}</div>`:''}<div class="item-meta">${escapeHtml(m.mensagem||'')}</div>${isAdmin?'<div class="item-actions"><button class="edit-btn">Marcar lida</button><button class="confirm-btn">Resolvida</button></div>':''}`;if(isAdmin){card.querySelector('.edit-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'lida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.confirm-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'resolvida',atualizadoEm:serverTimestamp()});loadMessages();};}listEl.appendChild(card);});}
 
 // NOTIFICAÇÕES INTERNAS: 1 DOCUMENTO POR DESTINATÁRIO
