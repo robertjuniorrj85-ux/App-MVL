@@ -313,17 +313,17 @@ async function sendMessage() {
         );
       }
 
-      await enviarPushMVL(
+      enviarPushMVL(
         'mensagem_admin',
         'Nova mensagem no MVL',
         `${currentUserData.nome || currentUser.email}: ${mensagem.slice(0, 140)}`
-      );
+      ).catch(erro => {
+        console.error('Push não enviado:', erro);
+      });
     }
 
     $('msg-body').value = '';
-
     alert('Mensagem enviada.');
-
     await loadMessages();
 
   } catch (e) {
