@@ -15,6 +15,43 @@ const auth=getAuth(fbApp);
 const db=getFirestore(fbApp);
 setPersistence(auth,browserLocalPersistence).catch(()=>{});
 const MVL_PUSH_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
+async function enviarPushMVL(tipo, titulo, mensagem, destinatarios = []) {
+  try {
+    const user = auth.currentUser;
+    if (!user) return false;
+
+    const idToken = await user.getIdToken();
+
+    const resposta = await fetch(MVL_PUSH_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain;charset=utf-8'
+      },
+      body: JSON.stringify({
+        idToken,
+        tipo,
+        titulo,
+        mensagem,
+        destinatarios,
+        url: 'https://robertjuniorrj85-ux.github.io/App-MVL/'
+      })
+    });
+
+    const resultado = await resposta.json();
+
+    if (!resultado.ok) {
+      console.error('Erro Push MVL:', resultado);
+      return false;
+    }
+
+    console.log('Push MVL enviado:', resultado);
+    return true;
+
+  } catch (erro) {
+    console.error('Falha ao enviar Push MVL:', erro);
+    return false;
+  }
+}
 const $=id=>document.getElementById(id);
 const login=$('login'),appScreen=$('app'),email=$('email'),senha=$('senha'),entrar=$('entrar');
 const loginStatus=$('login-status'),saudacao=$('saudacao'),homeView=$('home-view'),sectionView=$('section-view');
