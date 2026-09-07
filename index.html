@@ -1,70 +1,134 @@
-<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#090909">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default"><title>MVL - Ministério Vasos de Louvores</title><link rel="manifest" href="manifest.webmanifest?v=8.0"><link rel="icon" sizes="192x192" href="mvl-icon-192-v4.png?v=4.0"><link rel="apple-touch-icon" href="mvl-icon-192-v4.png?v=4.0"><link rel="stylesheet" href="./styles.css"></head>
-<body><main>
-<section id="login" class="screen"><img class="logo" src="./logo-mvl.jpg"><h1>MVL</h1><p>MINISTÉRIO VASOS DE LOUVORES</p><div class="box"><input id="email" type="email" autocomplete="username" placeholder="E-mail"><input id="senha" type="password" autocomplete="current-password" placeholder="Senha"><button id="entrar" class="primary">Entrar</button><p id="login-status" class="hint"></p><button class="install install-trigger" style="display:none">⬇ INSTALAR APLICATIVO<small>Adicione o MVL à sua tela inicial</small></button><p class="hint">Se o botão não aparecer: Chrome ⋮ → Instalar app ou Adicionar à tela inicial.</p></div><footer>Unidade • Comunhão • Adoração<br><b>PIB PARQUE DOS FARÓIS</b></footer></section>
-<section id="app" class="screen hide">
-<header>
-  <img src="./logo-mvl.jpg">
-  <div><b>MVL</b><small>Ministério Vasos de Louvores</small><span id="role-badge" class="role-badge">Integrante</span></div>
-  <button id="sair" class="logout">Sair</button>
-</header>
-
-<div class="content">
-  <section id="home-view" class="view">
-    <h2 id="saudacao">Olá!</h2>
-    <p class="muted">Que bom te ver por aqui.</p>
-
-    <article>
-      <b>📅 Próximo Culto</b>
-      <h3>Domingo</h3>
-      <p>19h00</p>
-    </article>
-
-    <button class="install install-trigger" style="display:none">
-      ⬇ INSTALAR APLICATIVO
-      <small>Adicione o MVL à sua tela inicial</small>
-    </button>
-
-    <div class="grid">
-      <button class="menu-card" data-page="escalas">👥<b>Escalas</b></button>
-      <button class="menu-card" data-page="repertorio">🎵<b>Repertório</b></button>
-      <button class="menu-card" data-page="musicas">🎶<b>Músicas</b></button>
-      <button class="menu-card" data-page="agenda">🗓️<b>Agenda</b></button>
-      <button class="menu-card" data-page="avisos">📣<b>Avisos</b></button>
-      <button class="menu-card" data-page="membros">👤<b>Membros</b></button>
-      <button class="menu-card" data-page="arquivos">📁<b>Arquivos</b></button>
-      <button class="menu-card" data-page="multitracks">🎚️<b>Multitracks</b></button>
-      <button class="menu-card" data-page="links">🔗<b>Links Úteis</b></button>
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#090909">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>MVL - Ministério Vasos de Louvores</title>
+  <link rel="manifest" href="manifest.webmanifest?v=9.0">
+  <link rel="icon" sizes="192x192" href="mvl-icon-192-v4.png?v=9.0">
+  <link rel="apple-touch-icon" href="mvl-icon-192-v4.png?v=9.0">
+  <link rel="stylesheet" href="./styles.css?v=9.0">
+</head>
+<body>
+<main>
+  <section id="login" class="screen login-screen">
+    <div class="login-wrap">
+      <img class="login-logo" src="./logo-mvl.jpg" alt="MVL">
+      <h1>MVL</h1>
+      <p>Ministério Vasos de Louvores</p>
+      <input id="email" type="email" autocomplete="username" placeholder="E-mail">
+      <input id="senha" type="password" autocomplete="current-password" placeholder="Senha">
+      <button id="entrar" class="primary">Entrar</button>
+      <p id="login-status" class="hint"></p>
     </div>
-
-    <blockquote>“Portanto, quer comais, quer bebais ou façais outra qualquer coisa, fazei tudo para glória de Deus.”<br><small>1 Coríntios 10:31</small></blockquote>
   </section>
 
-  <section id="section-view" class="view hide">
-    <div class="section-top">
-      <button id="voltar" class="back-btn">← Voltar</button>
-      <div>
-        <h2 id="section-title">Seção</h2>
-        <p id="section-subtitle" class="muted"></p>
+  <section id="app" class="screen hide">
+    <header>
+      <img src="./logo-mvl.jpg" alt="MVL">
+      <div class="brand">
+        <b>MVL</b>
+        <small>Ministério Vasos de Louvores</small>
+        <span id="role-badge" class="role-badge">Integrante</span>
       </div>
+      <button id="sair" class="logout">Sair</button>
+    </header>
+
+    <div class="content">
+      <section id="home-view" class="view">
+        <div class="hero-row">
+          <div>
+            <h2 id="saudacao">Olá!</h2>
+            <p class="muted">Que bom te ver por aqui.</p>
+          </div>
+          <button id="notif-bell" class="icon-btn" title="Notificações">🔔<span id="notif-count" class="badge hide">0</span></button>
+        </div>
+
+        <article id="next-scale-card" class="highlight-card">
+          <b>🎵 Minha próxima escala</b>
+          <div id="next-scale-content"><p class="muted">Nenhuma escala encontrada.</p></div>
+        </article>
+
+        <button class="install install-trigger" style="display:none">
+          ⬇ INSTALAR APLICATIVO
+          <small>Adicione o MVL à sua tela inicial</small>
+        </button>
+
+        <div class="grid">
+          <button class="menu-card" data-page="escalas">👥<b>Escalas</b></button>
+          <button class="menu-card" data-page="repertorio">🎵<b>Repertório</b></button>
+          <button class="menu-card" data-page="musicas">🎶<b>Músicas</b></button>
+          <button class="menu-card" data-page="agenda">🗓️<b>Agenda</b></button>
+          <button class="menu-card" data-page="calendario">📆<b>Calendário</b></button>
+          <button class="menu-card" data-page="avisos">📣<b>Avisos</b></button>
+          <button class="menu-card" data-page="comunicacao">💬<b>Comunicação</b></button>
+          <button class="menu-card" data-page="perfil">👤<b>Meu Perfil</b></button>
+          <button class="menu-card" data-page="membros">👥<b>Membros</b></button>
+          <button class="menu-card" data-page="arquivos">📁<b>Arquivos</b></button>
+          <button class="menu-card" data-page="multitracks">🎚️<b>Multitracks</b></button>
+          <button class="menu-card" data-page="links">🔗<b>Links Úteis</b></button>
+          <button class="menu-card" data-page="notificacoes">🔔<b>Notificações</b></button>
+        </div>
+
+        <blockquote>
+          “Portanto, quer comais, quer bebais ou façais outra qualquer coisa, fazei tudo para glória de Deus.”
+          <br><small>1 Coríntios 10:31</small>
+        </blockquote>
+
+        <footer class="app-footer">
+          <b>MVL – Ministério Vasos de Louvores</b>
+          <span>Desenvolvido por Robert Junior</span>
+          <span>© 2026</span>
+        </footer>
+      </section>
+
+      <section id="section-view" class="view hide">
+        <div class="section-top">
+          <button id="voltar" class="back-btn">← Voltar</button>
+          <div>
+            <h2 id="section-title">Seção</h2>
+            <p id="section-subtitle" class="muted"></p>
+          </div>
+        </div>
+
+        <div id="section-special"></div>
+
+        <div id="admin-panel" class="admin-panel">
+          <h3 id="form-title">Adicionar</h3>
+          <div id="dynamic-form"></div>
+          <div class="form-actions">
+            <button id="salvar-item" class="primary">Salvar</button>
+            <button id="cancelar-edicao" class="secondary hide">Cancelar</button>
+          </div>
+        </div>
+
+        <div id="items-list" class="items-list"></div>
+      </section>
     </div>
 
-    <div id="admin-panel" class="admin-panel">
-      <h3 id="form-title">Adicionar</h3>
-      <div id="dynamic-form"></div>
-      <button id="salvar-item" class="primary">Salvar</button>
-    </div>
-
-    <div id="items-list" class="items-list"></div>
+    <nav>
+      <button class="nav-btn active" data-page="inicio">⌂<span>Início</span></button>
+      <button class="nav-btn" data-page="escalas">👥<span>Escalas</span></button>
+      <button class="nav-btn" data-page="calendario">📆<span>Calendário</span></button>
+      <button class="nav-btn" data-page="comunicacao">💬<span>Mensagens</span></button>
+    </nav>
   </section>
+</main>
+
+<div id="password-modal" class="modal hide">
+  <div class="modal-card">
+    <h2>Crie sua nova senha</h2>
+    <p>Por segurança, altere a senha provisória antes de continuar.</p>
+    <input id="nova-senha" type="password" placeholder="Nova senha">
+    <input id="confirma-senha" type="password" placeholder="Confirmar nova senha">
+    <button id="salvar-nova-senha" class="primary">Alterar senha</button>
+    <p id="password-status" class="hint"></p>
+  </div>
 </div>
 
-<nav>
-  <button class="nav-btn active" data-page="inicio">⌂<span>Início</span></button>
-  <button class="nav-btn" data-page="escalas">👥<span>Escalas</span></button>
-  <button class="nav-btn" data-page="musicas">♫<span>Músicas</span></button>
-  <button class="nav-btn" data-page="agenda">▣<span>Agenda</span></button>
-</nav>
-</section>
-</main><script type="module" src="./app.js?v=8.0"></script></body></html>
+<script type="module" src="./app.js?v=9.0"></script>
+</body>
+</html>
