@@ -1,4 +1,4 @@
-import { firebaseConfig } from './firebase-config.js?v=5.0';
+import { firebaseConfig } from './firebase-config.js?v=6.0';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, setPersistence, browserLocalPersistence } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js';
 import { getFirestore, doc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js';
@@ -54,5 +54,5 @@ installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredP
 window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});
 
 if('serviceWorker' in navigator){
- window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=5.0').then(r=>r.update()).catch(()=>{}));
+ window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=6.0').then(r=>r.update()).catch(()=>{}));
 }
