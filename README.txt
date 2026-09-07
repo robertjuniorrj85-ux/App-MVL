@@ -1,16 +1,20 @@
-MVL V7 - ABAS FUNCIONANDO
+MVL V8 - ADMINISTRADOR x INTEGRANTE
 
-Correção principal:
-- Escalas, Repertório, Músicas, Agenda, Avisos, Membros, Arquivos, Multitracks e Links agora abrem normalmente.
-- Cada área já permite cadastrar, editar e excluir dados no Firestore.
-- Login Firebase e versículo de 1 Coríntios 10:31 foram mantidos.
+Novidades:
+- O aplicativo consulta o campo role do usuário no Firestore.
+- role = admin: mostra Administrador e permite Adicionar, Editar e Excluir.
+- Demais usuários: mostra Integrante e entra somente em modo de visualização.
+- Para integrantes, o painel de cadastro e os botões Editar/Excluir ficam ocultos.
+- As regras de segurança do Firestore continuam sendo a proteção real.
+- Login Firebase, abas, sincronização e 1 Coríntios 10:31 foram mantidos.
 
 ATUALIZAÇÃO:
-1. Extraia este ZIP.
+1. Extraia o ZIP.
 2. Substitua os arquivos na raiz do repositório App-MVL.
 3. Aguarde o GitHub Pages atualizar.
-4. Abra index.html?v=7.0.
+4. Abra:
+   https://robertjuniorrj85-ux.github.io/App-MVL/index.html?v=8.0
 
-OBSERVAÇÃO:
-Por enquanto as regras do Firestore ainda permitem gravação para qualquer usuário autenticado.
-A próxima etapa será travar edição apenas para o administrador.
+TESTE RECOMENDADO:
+- Entre com o usuário admin: deve aparecer Administrador.
+- Entre com o outro usuário: deve aparecer Integrante e sem opções de edição.

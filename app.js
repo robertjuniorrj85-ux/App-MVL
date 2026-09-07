@@ -1,11 +1,11 @@
-import { firebaseConfig } from './firebase-config.js?v=7.0';
+import { firebaseConfig } from './firebase-config.js?v=8.0';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
   setPersistence, browserLocalPersistence
 } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js';
 import {
-  getFirestore, doc, setDoc, serverTimestamp, collection, addDoc,
+  getFirestore, doc, setDoc, getDoc, serverTimestamp, collection, addDoc,
   getDocs, deleteDoc, updateDoc, query, orderBy
 } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js';
 
@@ -28,10 +28,13 @@ const sectionSubtitle=document.getElementById('section-subtitle');
 const dynamicForm=document.getElementById('dynamic-form');
 const listEl=document.getElementById('items-list');
 const saveBtn=document.getElementById('salvar-item');
+const adminPanel=document.getElementById('admin-panel');
+const roleBadge=document.getElementById('role-badge');
 
 let currentUser=null;
 let currentPage='inicio';
 let editingId=null;
+let isAdmin=false;
 
 const sections={
   escalas:{
@@ -162,19 +165,46 @@ document.getElementById('sair').addEventListener('click',()=>signOut(auth));
 
 onAuthStateChanged(auth,async user=>{
   currentUser=user;
+  isAdmin=false;
+
   if(user){
     login.classList.add('hide');
     appScreen.classList.remove('hide');
+
     const nome=(user.displayName||user.email.split('@')[0]);
     saudacao.textContent='Olá, '+nome+'!';
+
     try{
-      await setDoc(doc(db,'usuarios',user.uid),{
-        email:user.email,
-        ultimoAcesso:serverTimestamp()
-      },{merge:true});
+      const userRef=doc(db,'usuarios',user.uid);
+      let userSnap=await getDoc(userRef);
+
+      if(!userSnap.exists()){
+        // O próprio usuário pode criar o seu registro inicial.
+        await setDoc(userRef,{
+          email:user.email,
+          role:'member',
+          criadoEm:serverTimestamp()
+        });
+        userSnap=await getDoc(userRef);
+      }
+
+      const dados=userSnap.data()||{};
+      isAdmin=(dados.role==='admin');
+
+      // Somente administradores podem atualizar o próprio último acesso
+      // pelas regras atuais do Firestore.
+      if(isAdmin){
+        await setDoc(userRef,{
+          email:user.email,
+          ultimoAcesso:serverTimestamp()
+        },{merge:true});
+      }
     }catch(e){
-      console.warn('Firestore:',e.code);
+      console.warn('Firestore usuário:',e.code||e);
+      isAdmin=false;
     }
+
+    updateRoleUI();
     goHome();
   }else{
     appScreen.classList.add('hide');
@@ -182,6 +212,20 @@ onAuthStateChanged(auth,async user=>{
     msg('');
   }
 });
+
+function updateRoleUI(){
+  if(isAdmin){
+    roleBadge.textContent='Administrador';
+    roleBadge.classList.add('admin');
+  }else{
+    roleBadge.textContent='Integrante';
+    roleBadge.classList.remove('admin');
+  }
+
+  if(adminPanel){
+    adminPanel.classList.toggle('hide',!isAdmin);
+  }
+}
 
 function goHome(){
   currentPage='inicio';
@@ -227,8 +271,15 @@ async function openSection(page){
   document.getElementById('form-title').textContent='Adicionar';
   saveBtn.textContent='Salvar';
   buildForm(config);
+  if(adminPanel) adminPanel.classList.toggle('hide',!isAdmin);
   setActiveNav(page);
   await loadItems();
+  if(!isAdmin){
+    const note=document.createElement('div');
+    note.className='readonly-note';
+    note.textContent='Modo de visualização: somente administradores podem cadastrar, editar ou excluir.';
+    listEl.prepend(note);
+  }
 }
 
 async function loadItems(){
@@ -264,18 +315,20 @@ async function loadItems(){
       card.innerHTML=`
         <h3>${escapeHtml(primary)}</h3>
         ${rest}
-        <div class="item-actions">
+        ${isAdmin ? `<div class="item-actions">
           <button class="edit-btn">Editar</button>
           <button class="delete-btn">Excluir</button>
-        </div>`;
-      card.querySelector('.edit-btn').addEventListener('click',()=>{
+        </div>` : ''}`;
+      const editBtn=card.querySelector('.edit-btn');
+      if(editBtn) editBtn.addEventListener('click',()=>{
         editingId=d.id;
         buildForm(config,data);
         document.getElementById('form-title').textContent='Editar';
         saveBtn.textContent='Atualizar';
         window.scrollTo({top:0,behavior:'smooth'});
       });
-      card.querySelector('.delete-btn').addEventListener('click',async()=>{
+      const deleteBtn=card.querySelector('.delete-btn');
+      if(deleteBtn) deleteBtn.addEventListener('click',async()=>{
         if(confirm('Excluir este item?')){
           await deleteDoc(doc(db,config.collection,d.id));
           await loadItems();
@@ -290,6 +343,10 @@ async function loadItems(){
 }
 
 saveBtn.addEventListener('click',async()=>{
+  if(!isAdmin){
+    alert('Somente administradores podem alterar os dados.');
+    return;
+  }
   const config=sections[currentPage];
   if(!config) return;
   const data=collectForm(config);
@@ -362,5 +419,5 @@ window.addEventListener('appinstalled',()=>{
 });
 
 if('serviceWorker' in navigator){
-  window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=7.0').then(r=>r.update()).catch(()=>{}));
+  window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=8.0').then(r=>r.update()).catch(()=>{}));
 }
