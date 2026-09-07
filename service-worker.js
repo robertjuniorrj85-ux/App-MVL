@@ -1,7 +1,7 @@
-const CACHE='mvl-v9';
+const CACHE='mvl-v9-1';
 const STATIC=[
-  './index.html?v=9.0','./styles.css?v=9.0','./app.js?v=9.0','./firebase-config.js?v=9.0',
-  './manifest.webmanifest?v=9.0','./logo-mvl.jpg','./mvl-icon-192-v4.png','./mvl-icon-512-v4.png'
+  './index.html?v=9.1','./styles.css?v=9.1','./app.js?v=9.1','./firebase-config.js?v=9.1',
+  './manifest.webmanifest?v=9.1','./firebase-messaging-sw.js?v=9.1','./logo-mvl.jpg','./mvl-icon-192-v4.png','./mvl-icon-512-v4.png'
 ];
 self.addEventListener('install',event=>{
   event.waitUntil(caches.open(CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting()));
@@ -23,6 +23,6 @@ self.addEventListener('notificationclick',event=>{
   event.notification.close();
   event.waitUntil(clients.matchAll({type:'window',includeUncontrolled:true}).then(list=>{
     for(const c of list){if('focus'in c)return c.focus();}
-    if(clients.openWindow)return clients.openWindow('./index.html?v=9.0');
+    if(clients.openWindow)return clients.openWindow('./index.html?v=9.1');
   }));
 });

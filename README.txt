@@ -1,45 +1,34 @@
-MVL 9.0
+MVL 9.1 - CORREÇÕES E PUSH
 
-PRINCIPAIS NOVIDADES
-- Meu Perfil
-- Troca de senha
-- Troca obrigatória de senha para novos usuários cujo documento tenha mustChangePassword = true
-- Escalas com seleção de integrantes
-- Confirmação de presença / não poderei participar
-- Repertório usando músicas cadastradas
-- Agenda com destinatários e lembretes
-- Calendário mensal interativo
-- Comunicação privada com a liderança
-- Caixa de notificações dentro do MVL
-- Aviso somente para pessoas escaladas
-- "Minha próxima escala" na página inicial
-- Rodapé: Desenvolvido por Robert Junior © 2026
-- Regras de segurança revisadas
+CORRIGIDO
+- Integrante pode salvar nome e função em Meu Perfil.
+- Integrante pode enviar mensagem privada à liderança.
+- Integrante pode confirmar presença ou informar que não poderá participar.
+- Mensagens de erro aparecem quando o Firestore bloqueia alguma ação.
+- Registro do aparelho no Firebase Cloud Messaging.
+- Chave pública VAPID já configurada.
+- Service worker separado para receber notificações FCM em segundo plano.
+- Token do aparelho salvo em:
+  usuarios/{UID}/dispositivos/{ID}
 
-COMO ATUALIZAR
-1. Extraia o ZIP.
-2. Substitua os arquivos na raiz do repositório App-MVL.
-3. Aguarde o GitHub Pages atualizar.
-4. Abra:
-   https://robertjuniorrj85-ux.github.io/App-MVL/index.html?v=9.0
+PASSOS PARA ATUALIZAR
+1. Substitua os arquivos do repositório App-MVL pelos arquivos deste pacote.
+2. Firebase > Firestore > Regras.
+3. Copie TODO o conteúdo de FIRESTORE_RULES_V9_1.txt.
+4. Clique em Publicar.
+5. Abra:
+   https://robertjuniorrj85-ux.github.io/App-MVL/index.html?v=9.1
+6. No celular do integrante:
+   - entre no MVL;
+   - abra Notificações;
+   - toque em Permitir notificações;
+   - aceite a permissão do navegador.
 
-MUITO IMPORTANTE - REGRAS DO FIRESTORE
-Depois de atualizar o app, abra Firebase > Firestore > Regras.
-Copie todo o conteúdo do arquivo FIRESTORE_RULES_V9.txt e publique.
+IMPORTANTE SOBRE PUSH
+A V9.1 agora REGISTRA os celulares corretamente no FCM e consegue RECEBER push.
+Porém, para o MVL ENVIAR automaticamente uma notificação FCM para os tokens ao criar uma escala/agenda,
+é necessário um backend seguro, como Firebase Cloud Functions.
 
-NOVOS USUÁRIOS
-Você continua criando o usuário em Firebase > Authentication.
-No primeiro login, se ainda não existir documento em usuarios/{UID}, o MVL cria:
-role = member
-mustChangePassword = true
-Isso força o integrante a escolher uma nova senha.
+Não coloque chave privada ou credencial de servidor no GitHub.
 
-NOTIFICAÇÕES
-A V9 possui:
-- caixa de notificações dentro do MVL;
-- solicitação de permissão de notificação do navegador;
-- lembretes locais enquanto o app estiver aberto/ativo.
-
-Para receber PUSH agendado com o aplicativo totalmente fechado (por exemplo, exatamente 3 horas antes),
-ainda é necessário configurar Firebase Cloud Messaging + uma função agendada no servidor.
-Essa etapa não foi ativada porque precisa de configuração adicional no Firebase/Cloud.
+A caixa de notificações do próprio MVL continua funcionando normalmente.

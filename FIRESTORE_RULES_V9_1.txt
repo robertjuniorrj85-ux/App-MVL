@@ -1,0 +1,123 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function logged() {
+      return request.auth != null;
+    }
+
+    function admin() {
+      return logged()
+        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /usuarios/{uid} {
+      allow read: if logged();
+
+      allow create: if logged()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'member';
+
+      allow update: if admin()
+        || (
+          logged()
+          && request.auth.uid == uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'nome','funcao','email','mustChangePassword','ultimoAcesso','atualizadoEm'
+          ])
+        );
+
+      allow delete: if admin();
+
+      match /dispositivos/{deviceId} {
+        allow read, create, update, delete: if logged() && request.auth.uid == uid;
+      }
+    }
+
+    match /mensagens/{id} {
+      allow create: if logged()
+        && request.resource.data.autorId == request.auth.uid
+        && request.resource.data.status == 'nova';
+
+      allow read: if admin()
+        || (logged() && resource.data.autorId == request.auth.uid);
+
+      allow update: if admin();
+      allow delete: if admin();
+    }
+
+    match /notificacoes/{id} {
+      allow create, delete: if admin();
+
+      allow read: if logged() && (
+        resource.data.todos == true ||
+        request.auth.uid in resource.data.destinatarios
+      );
+
+      allow update: if logged() && (
+        resource.data.todos == true ||
+        request.auth.uid in resource.data.destinatarios
+      );
+    }
+
+    match /escalas/{escalaId} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+
+      match /confirmacoes/{uid} {
+        allow read: if admin()
+          || (logged() && request.auth.uid == uid);
+
+        allow create, update: if logged()
+          && request.auth.uid == uid
+          && request.resource.data.usuarioId == request.auth.uid
+          && request.resource.data.status in ['confirmado','nao_posso'];
+
+        allow delete: if admin()
+          || (logged() && request.auth.uid == uid);
+      }
+    }
+
+    match /agenda/{id} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+    }
+
+    match /repertorios/{id} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+    }
+
+    match /musicas/{id} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+    }
+
+    match /avisos/{id} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+    }
+
+    match /arquivos/{id} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+    }
+
+    match /multitracks/{id} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+    }
+
+    match /links/{id} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+    }
+
+    match /membros/{id} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+    }
+  }
+}

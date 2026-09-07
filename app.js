@@ -1,4 +1,4 @@
-import { firebaseConfig } from './firebase-config.js?v=9.0';
+import { firebaseConfig } from './firebase-config.js?v=9.1';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
@@ -9,11 +9,32 @@ import {
   getFirestore, doc, setDoc, getDoc, serverTimestamp, collection, addDoc,
   getDocs, deleteDoc, updateDoc, query, orderBy, where, onSnapshot
 } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js';
+import {
+  getMessaging, getToken, onMessage, isSupported
+} from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-messaging.js';
 
 const fbApp=initializeApp(firebaseConfig);
 const auth=getAuth(fbApp);
 const db=getFirestore(fbApp);
 setPersistence(auth,browserLocalPersistence).catch(()=>{});
+const VAPID_KEY='BDOI4MyF4n08PBpooA8cwRHZfSobF4BP2qiYUpq0sYaYbkuyxUBPudrZbuVfWenkYzwZJeILT7r83uI5VCIStrI';
+let messaging=null;
+isSupported().then(ok=>{ if(ok) messaging=getMessaging(fbApp); }).catch(()=>{});
+
+
+isSupported().then(async ok=>{
+  if(!ok)return;
+  try{
+    messaging=getMessaging(fbApp);
+    onMessage(messaging,payload=>{
+      const title=payload.notification?.title||payload.data?.title||'MVL';
+      const body=payload.notification?.body||payload.data?.body||'';
+      if(Notification.permission==='granted'){
+        try{new Notification(title,{body,icon:'./mvl-icon-192-v4.png'});}catch{}
+      }
+    });
+  }catch(e){console.warn('FCM foreground',e);}
+});
 
 const $=id=>document.getElementById(id);
 const login=$('login'), appScreen=$('app'), email=$('email'), senha=$('senha'), entrar=$('entrar');
@@ -268,10 +289,17 @@ function renderProfile(){
 }
 async function saveProfile(){
   const nome=$('profile-name').value.trim(), funcao=$('profile-role').value.trim();
-  await setDoc(doc(db,'usuarios',currentUser.uid),{nome,funcao,email:currentUser.email},{merge:true});
-  await updateProfile(currentUser,{displayName:nome}).catch(()=>{});
-  currentUserData={...currentUserData,nome,funcao}; saudacao.textContent='Olá, '+(nome||currentUser.email.split('@')[0])+'!';
-  alert('Perfil atualizado.');
+  try{
+    await setDoc(doc(db,'usuarios',currentUser.uid),{nome,funcao,email:currentUser.email,atualizadoEm:serverTimestamp()},{merge:true});
+    await updateProfile(currentUser,{displayName:nome}).catch(()=>{});
+    currentUserData={...currentUserData,nome,funcao};
+    saudacao.textContent='Olá, '+(nome||currentUser.email.split('@')[0])+'!';
+    alert('Perfil atualizado com sucesso.');
+    await refreshCaches();
+  }catch(e){
+    console.error('saveProfile',e);
+    alert('Não foi possível salvar seu perfil. Verifique se as regras V9.1 foram publicadas no Firestore.');
+  }
 }
 async function changePasswordFromProfile(){
   const cur=$('current-pass').value, np=$('profile-new-pass').value, cp=$('profile-confirm-pass').value, st=$('profile-pass-status');
@@ -409,8 +437,16 @@ async function buildScaleCard(s){
   return card;
 }
 async function setConfirmation(scaleId,status){
-  await setDoc(doc(db,'escalas',scaleId,'confirmacoes',currentUser.uid),{status,usuarioId:currentUser.uid,atualizadoEm:serverTimestamp()},{merge:true});
-  renderScales();
+  try{
+    await setDoc(doc(db,'escalas',scaleId,'confirmacoes',currentUser.uid),{
+      status,usuarioId:currentUser.uid,atualizadoEm:serverTimestamp()
+    },{merge:true});
+    alert(status==='confirmado'?'Presença confirmada.':'Resposta registrada.');
+    renderScales();
+  }catch(e){
+    console.error('setConfirmation',e);
+    alert('Não foi possível registrar sua resposta. Verifique se as regras V9.1 foram publicadas.');
+  }
 }
 async function renderNextScale(){
   if(!currentUser)return;
@@ -521,9 +557,22 @@ async function renderCommunication(){
   await loadMessages();
 }
 async function sendMessage(){
-  const tipo=$('msg-type').value,mensagem=$('msg-body').value.trim(); if(!mensagem){alert('Escreva a mensagem.');return;}
-  await addDoc(collection(db,'mensagens'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,autorEmail:currentUser.email,tipo,mensagem,status:'nova',criadoEm:serverTimestamp()});
-  $('msg-body').value=''; await loadMessages();
+  const tipo=$('msg-type').value,mensagem=$('msg-body').value.trim();
+  if(!mensagem){alert('Escreva a mensagem.');return;}
+  try{
+    await addDoc(collection(db,'mensagens'),{
+      autorId:currentUser.uid,
+      autorNome:currentUserData.nome||currentUser.email,
+      autorEmail:currentUser.email,
+      tipo,mensagem,status:'nova',criadoEm:serverTimestamp()
+    });
+    $('msg-body').value='';
+    alert('Mensagem enviada à liderança.');
+    await loadMessages();
+  }catch(e){
+    console.error('sendMessage',e);
+    alert('Não foi possível enviar a mensagem. Verifique se as regras V9.1 foram publicadas.');
+  }
 }
 async function loadMessages(){
   const all=await safeDocs('mensagens');
@@ -558,15 +607,65 @@ function bindNotifications(){
 }
 async function maybeBrowserNotify(n){
   if(!('Notification'in window))return;
-  if(Notification.permission==='default') return;
-  if(Notification.permission==='granted'){
+  if(Notification.permission==='granted' && document.visibilityState==='visible'){
     try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}
   }
 }
-async function requestNotifications(){
-  if(!('Notification'in window)){alert('Este navegador não suporta notificações.');return;}
-  const p=await Notification.requestPermission(); alert(p==='granted'?'Notificações permitidas neste dispositivo.':'Permissão de notificações não concedida.');
+
+async function registerPushToken(){
+  if(!currentUser) throw new Error('not-authenticated');
+  if(!('Notification' in window)) throw new Error('notification-unsupported');
+
+  let reg = await navigator.serviceWorker.getRegistration();
+  if(!reg) reg = await navigator.serviceWorker.register('./firebase-messaging-sw.js?v=9.1');
+
+  const permission = await Notification.requestPermission();
+  if(permission!=='granted') throw new Error('permission-denied');
+
+  if(!messaging){
+    const ok = await isSupported().catch(()=>false);
+    if(!ok) throw new Error('messaging-unsupported');
+    messaging=getMessaging(fbApp);
+  }
+
+  const token = await getToken(messaging,{
+    vapidKey:VAPID_KEY,
+    serviceWorkerRegistration:reg
+  });
+  if(!token) throw new Error('no-token');
+
+  const tokenId = await sha256(token);
+  await setDoc(doc(db,'usuarios',currentUser.uid,'dispositivos',tokenId),{
+    token,
+    ativo:true,
+    plataforma:navigator.userAgent,
+    atualizadoEm:serverTimestamp()
+  },{merge:true});
+  return token;
 }
+
+async function sha256(text){
+  const data=new TextEncoder().encode(text);
+  const hash=await crypto.subtle.digest('SHA-256',data);
+  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+
+async function requestNotifications(){
+  try{
+    await registerPushToken();
+    alert('Notificações ativadas neste aparelho.');
+  }catch(e){
+    console.error('push registration',e);
+    const map={
+      'permission-denied':'A permissão de notificações não foi concedida.',
+      'messaging-unsupported':'Este navegador não oferece suporte completo ao Firebase Messaging.',
+      'notification-unsupported':'Este navegador não suporta notificações.',
+      'no-token':'O Firebase não conseguiu gerar o token deste aparelho.'
+    };
+    alert(map[e.message]||'Não foi possível ativar as notificações neste aparelho.');
+  }
+}
+
 async function renderNotifications(){
   showSectionHeader('Notificações','Avisos recebidos dentro do MVL.');
   adminPanel.classList.add('hide');
@@ -617,5 +716,5 @@ installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredP
 window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});
 
 if('serviceWorker'in navigator){
-  window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=9.0').then(r=>r.update()).catch(()=>{}));
+  window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=9.1').then(r=>r.update()).catch(()=>{}));
 }
