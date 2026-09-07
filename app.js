@@ -14,7 +14,7 @@ const fbApp=initializeApp(firebaseConfig);
 const auth=getAuth(fbApp);
 const db=getFirestore(fbApp);
 setPersistence(auth,browserLocalPersistence).catch(()=>{});
-
+const MVL_PUSH_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
 const $=id=>document.getElementById(id);
 const login=$('login'),appScreen=$('app'),email=$('email'),senha=$('senha'),entrar=$('entrar');
 const loginStatus=$('login-status'),saudacao=$('saudacao'),homeView=$('home-view'),sectionView=$('section-view');
