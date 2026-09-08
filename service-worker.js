@@ -1,6 +1,6 @@
-const CACHE='mvl-v9-2';
+const CACHE='mvl-v9-2-restaurado';
 const STATIC=[
-  './index.html?v=9.2','./styles.css?v=9.2','./app.js?v=9.2','./firebase-config.js?v=9.2',
+  './index.html?v=9.2.1','./styles.css?v=9.2.1','./app.js?v=9.2.1','./firebase-config.js?v=9.2.1',
   './manifest.webmanifest?v=9.2','./logo-mvl.jpg','./mvl-icon-192-v4.png','./mvl-icon-512-v4.png'
 ];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting())));
