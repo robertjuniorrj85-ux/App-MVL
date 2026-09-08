@@ -7,10 +7,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>MVL - Ministério Vasos de Louvores</title>
-  <link rel="manifest" href="manifest.webmanifest?v=9.2">
-  <link rel="icon" sizes="192x192" href="mvl-icon-192-v4.png?v=9.2">
-  <link rel="apple-touch-icon" href="mvl-icon-192-v4.png?v=9.2">
-  <link rel="stylesheet" href="./styles.css?v=9.2.1">
+  <link rel="manifest" href="manifest.webmanifest?v=9.3">
+  <link rel="icon" sizes="192x192" href="mvl-icon-192-v4.png?v=9.3">
+  <link rel="apple-touch-icon" href="mvl-icon-192-v4.png?v=9.3">
+  <link rel="stylesheet" href="./styles.css?v=9.3">
   <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
   <script>
     window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -43,6 +43,7 @@
       <input id="senha" type="password" autocomplete="current-password" placeholder="Senha">
       <button id="entrar" class="primary">Entrar</button>
       <p id="login-status" class="hint"></p>
+      <div class="login-credit">Desenvolvido por <b>Robert Junior</b><br>© 2026 • Versão 9.3</div>
     </div>
   </section>
 
@@ -71,6 +72,8 @@
           <b>🎵 Minha próxima escala</b>
           <div id="next-scale-content"><p class="muted">Nenhuma escala encontrada.</p></div>
         </article>
+
+        <article id="prayer-card" class="prayer-card"><p class="muted">Carregando espaço de oração...</p></article>
 
         <button class="install install-trigger" style="display:none">
           ⬇ INSTALAR APLICATIVO
@@ -102,7 +105,7 @@
           <b>MVL – Ministério Vasos de Louvores</b>
           <span>Desenvolvido por Robert Junior</span>
           <span>© 2026</span>
-          <span>Versão 9.2</span>
+          <span>Versão 9.3</span>
         </footer>
       </section>
 
@@ -147,6 +150,6 @@
   </div>
 </div>
 
-<script type="module" src="./app.js?v=9.2.2"></script>
+<script type="module" src="./app.js?v=9.3"></script>
 </body>
 </html>
