@@ -1,7 +1,7 @@
-const CACHE='mvl-v9-3';
+const CACHE='mvl-v9-3-1';
 const STATIC=[
-  './index.html?v=9.3','./styles.css?v=9.3','./app.js?v=9.3','./firebase-config.js?v=9.3',
-  './manifest.webmanifest?v=9.3','./logo-mvl.jpg','./mvl-icon-192-v4.png','./mvl-icon-512-v4.png'
+  './index.html?v=9.3.1','./styles.css?v=9.3.1','./app.js?v=9.3.1','./firebase-config.js?v=9.3.1',
+  './manifest.webmanifest?v=9.3.1','./logo-mvl.jpg','./mvl-icon-192-v4.png','./mvl-icon-512-v4.png'
 ];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));

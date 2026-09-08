@@ -1,4 +1,4 @@
-import { firebaseConfig } from './firebase-config.js?v=9.3';
+import { firebaseConfig } from './firebase-config.js?v=9.3.1';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
@@ -29,6 +29,7 @@ let calDate=new Date(),selectedDate=dateKey(new Date());
 let navStack=['inicio'];
 
 const simpleSections={
+  cifras:{title:'Cifras',subtitle:'Cifras do MVL em PDF pelo Google Drive.',collection:'cifras',fields:[['musica','Música','text'],['tom','Tom','text'],['link','Link do PDF da cifra','url'],['observacoes','Observações','textarea']]},
   avisos:{title:'Avisos',subtitle:'Comunicados para os integrantes.',collection:'avisos',fields:[['titulo','Título','text'],['mensagem','Mensagem','textarea']]},
   arquivos:{title:'Arquivos',subtitle:'Links para documentos, cifras e materiais.',collection:'arquivos',fields:[['nome','Nome do arquivo','text'],['link','Link do arquivo','url'],['descricao','Descrição','textarea']]},
   multitracks:{title:'Multitracks',subtitle:'Organize links das multitracks do ministério.',collection:'multitracks',fields:[['musica','Música','text'],['tom','Tom','text'],['link','Link da multitrack','url'],['observacoes','Observações','textarea']]},
@@ -106,7 +107,7 @@ function identifyOneSignal(){
 }
 function updateRoleUI(){roleBadge.textContent=isAdmin?'Administrador':'Integrante';roleBadge.classList.toggle('admin',isAdmin);}
 function pushNav(page){if(navStack[navStack.length-1]!==page){navStack.push(page);history.pushState({mvl:true,page},'','#'+page);}}
-function goHome(fromPop=false){currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale();renderPrayerCard();if(!fromPop)pushNav('inicio');}
+function goHome(fromPop=false){currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale();renderPrayerCard();renderBirthdayCard();if(!fromPop)pushNav('inicio');}
 window.addEventListener('popstate',()=>{if(chatUnsub){chatUnsub();chatUnsub=null;}if(navStack.length>1)navStack.pop();const target=navStack[navStack.length-1]||'inicio';if(target==='inicio')goHome(true);else openSection(target,true);});
 function setActiveNav(page){document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function showSectionHeader(title,subtitle){sectionTitle.textContent=title;sectionSubtitle.textContent=subtitle;}
@@ -135,7 +136,7 @@ function filterCards(term){document.querySelectorAll('#items-list .item-card').f
 async function renderSimpleSection(page){
   const cfg=simpleSections[page];showSectionHeader(cfg.title,cfg.subtitle);adminPanel.classList.toggle('hide',!isAdmin);
   if(isAdmin){$('form-title').textContent='Adicionar';dynamicForm.innerHTML='<div class="form-grid">'+cfg.fields.map(([k,l,t])=>makeField(k,l,t)).join('')+'</div>';saveBtn.onclick=()=>saveSimple(cfg);}
-  await loadSimpleItems(cfg);if(['arquivos','multitracks'].includes(page))addSearchBox(`Pesquisar em ${cfg.title.toLowerCase()}...`,filterCards);
+  await loadSimpleItems(cfg);if(['cifras','arquivos','multitracks'].includes(page))addSearchBox(`Pesquisar em ${cfg.title.toLowerCase()}...`,filterCards);
 }
 async function saveSimple(cfg){
   if(!isAdmin)return;const data=collectFields(cfg.fields);if(!Object.values(data).some(Boolean)){alert('Preencha pelo menos um campo.');return;}
@@ -143,7 +144,7 @@ async function saveSimple(cfg){
 }
 async function loadSimpleItems(cfg){
   const items=(await safeDocs(cfg.collection)).sort(byCreatedDesc);listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhum item cadastrado ainda.</div>';return;}
-  for(const item of items){const values=cfg.fields.map(([k,l])=>[l,item[k]]).filter(([,v])=>v);const primary=values[0]?.[1]||cfg.title;const rest=values.slice(1).map(([l,v])=>`<div class="item-meta"><b>${escapeHtml(l)}:</b> ${renderValue(v)}</div>`).join('');const card=document.createElement('div');card.className='item-card';card.innerHTML=`<h3>${escapeHtml(primary)}</h3>${rest}${isAdmin?'<div class="item-actions"><button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button></div>':''}`;
+  for(const item of items){const values=cfg.fields.map(([k,l])=>[l,item[k]]).filter(([,v])=>v);const primary=values[0]?.[1]||cfg.title;const rest=values.slice(1).map(([l,v])=>{if(cfg.collection==='cifras'&&l==='Link do PDF da cifra'&&safeUrl(v))return `<div class="item-meta"><a class="link-btn" href="${escapeAttr(v)}" target="_blank" rel="noopener">📄 Abrir Cifra</a></div>`;return `<div class="item-meta"><b>${escapeHtml(l)}:</b> ${renderValue(v)}</div>`;}).join('');const card=document.createElement('div');card.className='item-card';card.innerHTML=`<h3>${escapeHtml(primary)}</h3>${rest}${isAdmin?'<div class="item-actions"><button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button></div>':''}`;
     if(isAdmin){card.querySelector('.edit-btn').onclick=()=>{editingId=item.id;$('form-title').textContent='Editar';saveBtn.textContent='Atualizar';cancelEditBtn.classList.remove('hide');dynamicForm.innerHTML='<div class="form-grid">'+cfg.fields.map(([k,l,t])=>makeField(k,l,t,item[k]||'')).join('')+'</div>';saveBtn.onclick=()=>saveSimple(cfg);window.scrollTo({top:0,behavior:'smooth'});};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir este item?')){await deleteDoc(doc(db,cfg.collection,item.id));renderSimpleSection(currentPage);}};}
     listEl.appendChild(card);
   }
@@ -233,8 +234,31 @@ async function deleteScaleCascade(scaleId){
   const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();
 }
 async function setConfirmation(scale,status){
-  try{await setDoc(doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid),{status,usuarioId:currentUser.uid,usuarioNome:currentUserData.nome||currentUser.email,atualizadoEm:serverTimestamp()},{merge:true});const admins=usersCache.filter(u=>u.role==='admin').map(u=>u.id).filter(id=>id!==currentUser.uid);if(admins.length){await createNotifications(admins,'Resposta de escala',`${currentUserData.nome||currentUser.email} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${scale.evento}.`,'confirmacao_escala',scale.id);enviarPushMVL('confirmacao_admin','Resposta de escala',`${currentUserData.nome||currentUser.email} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${scale.evento}.`,admins).catch(()=>{});}alert(status==='confirmado'?'Presença confirmada.':'Resposta registrada.');renderScales();}catch(e){console.error(e);alert('Não foi possível registrar sua resposta.');}
+  try{
+    await setDoc(doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid),{
+      status,
+      usuarioId:currentUser.uid,
+      usuarioNome:currentUserData.nome||currentUser.email,
+      atualizadoEm:serverTimestamp()
+    },{merge:true});
+  }catch(e){
+    console.error('Falha ao gravar confirmação',e);
+    alert('Não foi possível registrar sua resposta.');
+    return;
+  }
+
+  alert(status==='confirmado'?'Presença confirmada.':'Resposta registrada.');
+  renderScales().catch(e=>console.error('Atualização da escala',e));
+
+  const admins=usersCache.filter(u=>u.role==='admin').map(u=>u.id).filter(id=>id!==currentUser.uid);
+  if(!admins.length)return;
+  const texto=`${currentUserData.nome||currentUser.email} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${scale.evento}.`;
+  createNotifications(admins,'Resposta de escala',texto,'confirmacao_escala',scale.id)
+    .catch(e=>console.error('Notificação interna da confirmação',e));
+  enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins)
+    .catch(e=>console.error('Push da confirmação',e));
 }
+
 async function renderNextScale(){
   if(!currentUser)return;await refreshCaches();const today=dateKey(new Date());const mine=scalesCache.filter(s=>(s.integranteIds||[]).includes(currentUser.uid)&&s.data>=today).sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).slice(0,4);const el=$('next-scale-content');
   if(!mine.length){el.innerHTML='<p class="muted">Nenhuma escala futura encontrada.</p>';return;}
@@ -290,8 +314,13 @@ async function renderNotifications(){
 }
 
 // MEMBROS E PERFIL
-async function renderMembers(){showSectionHeader('Membros','Integrantes, funções e cores de identificação no chat.');adminPanel.classList.add('hide');usersCache=await safeDocs('usuarios');addSearchBox('Pesquisar integrante...',filterCards);listEl.innerHTML='';if(!usersCache.length){listEl.innerHTML='<div class="empty">Nenhum integrante registrado.</div>';return;}usersCache.sort((a,b)=>(a.nome||a.email||'').localeCompare(b.nome||b.email||'')).forEach(u=>{const card=document.createElement('div');card.className='item-card';const color=u.chatColor||'#9b2b2b';card.innerHTML=`<h3><span class="member-color" style="background:${escapeAttr(color)}"></span>${escapeHtml(u.nome||u.email||'Integrante')}</h3><div class="item-meta">${escapeHtml(u.funcao||'Função não informada')}</div>${isAdmin?`<div class="item-meta">${escapeHtml(u.email||'')}</div><span class="status-pill">${u.role==='admin'?'Administrador':'Integrante'}</span><div class="item-actions"><button class="edit-btn member-edit">Editar membro / cor</button></div>`:''}`;card.querySelector('.member-edit')?.addEventListener('click',()=>editMember(u));listEl.appendChild(card);});}
-function editMember(u){sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Editar integrante</h3><div class="form-grid"><input id="member-name" placeholder="Nome" value="${escapeAttr(u.nome||'')}"><input id="member-role" placeholder="Função / Instrumento" value="${escapeAttr(u.funcao||'')}"><label class="color-field">Cor no Chat da Escala <input id="member-color" type="color" value="${escapeAttr(u.chatColor||'#9b2b2b')}"></label></div><div class="form-actions"><button id="member-save" class="primary">Salvar</button><button id="member-cancel" class="secondary">Cancelar</button></div></div>`;$('member-cancel').onclick=()=>renderMembers();$('member-save').onclick=async()=>{await updateDoc(doc(db,'usuarios',u.id),{nome:$('member-name').value.trim(),funcao:$('member-role').value.trim(),chatColor:$('member-color').value,atualizadoEm:serverTimestamp()});await renderMembers();};window.scrollTo({top:0,behavior:'smooth'});}
+async function renderMembers(){showSectionHeader('Membros','Integrantes, funções, aniversários e cores de identificação no chat.');adminPanel.classList.add('hide');usersCache=await safeDocs('usuarios');addSearchBox('Pesquisar integrante...',filterCards);listEl.innerHTML='';if(!usersCache.length){listEl.innerHTML='<div class="empty">Nenhum integrante registrado.</div>';return;}usersCache.sort((a,b)=>(a.nome||a.email||'').localeCompare(b.nome||b.email||'')).forEach(u=>{const card=document.createElement('div');card.className='item-card';const color=u.chatColor||'#9b2b2b';const aniversario=u.aniversario?formatBirthday(u.aniversario):'';card.innerHTML=`<h3><span class="member-color" style="background:${escapeAttr(color)}"></span>${escapeHtml(u.nome||u.email||'Integrante')}</h3><div class="item-meta">${escapeHtml(u.funcao||'Função não informada')}</div>${aniversario?`<div class="item-meta">🎂 Aniversário: ${escapeHtml(aniversario)}</div>`:''}${isAdmin?`<div class="item-meta">${escapeHtml(u.email||'')}</div><span class="status-pill">${u.role==='admin'?'Administrador':'Integrante'}</span><div class="item-actions"><button class="edit-btn member-edit">Editar membro</button></div>`:''}`;card.querySelector('.member-edit')?.addEventListener('click',()=>editMember(u));listEl.appendChild(card);});}
+function formatBirthday(v=''){const parts=String(v).split('-');if(parts.length!==2)return v;return `${parts[1]}/${parts[0]}`;}
+function birthdayInputValue(v=''){return /^\d{2}-\d{2}$/.test(v)?`2000-${v}`:'';}
+function birthdayStorageValue(v=''){if(!v)return '';const p=v.split('-');return `${p[1]}-${p[2]}`;}
+async function syncBirthdaysForPush(){if(!isAdmin)return;try{const idToken=await currentUser.getIdToken();const pessoas=usersCache.map(u=>({uid:u.id,nome:u.nome||u.email||'Integrante',aniversario:u.aniversario||''}));await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'aniversario_sync',pessoas})});}catch(e){console.warn('Sincronização de aniversários',e);}}
+function editMember(u){sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Editar integrante</h3><div class="form-grid"><input id="member-name" placeholder="Nome" value="${escapeAttr(u.nome||'')}"><input id="member-role" placeholder="Função / Instrumento" value="${escapeAttr(u.funcao||'')}"><label class="birthday-field">🎂 Aniversário <input id="member-birthday" type="date" value="${escapeAttr(birthdayInputValue(u.aniversario||''))}"></label><small class="muted">O ano não será salvo; usamos somente dia e mês.</small><label class="color-field">Cor no Chat da Escala <input id="member-color" type="color" value="${escapeAttr(u.chatColor||'#9b2b2b')}"></label></div><div class="form-actions"><button id="member-save" class="primary">Salvar</button><button id="member-cancel" class="secondary">Cancelar</button></div></div>`;$('member-cancel').onclick=()=>renderMembers();$('member-save').onclick=async()=>{await updateDoc(doc(db,'usuarios',u.id),{nome:$('member-name').value.trim(),funcao:$('member-role').value.trim(),aniversario:birthdayStorageValue($('member-birthday').value),chatColor:$('member-color').value,atualizadoEm:serverTimestamp()});await refreshCaches();syncBirthdaysForPush();await renderMembers();};window.scrollTo({top:0,behavior:'smooth'});}
+async function renderBirthdayCard(){const host=$('birthday-card');if(!host||!currentUser)return;if(!usersCache.length)await refreshCaches();const now=new Date(),md=`${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const today=usersCache.filter(u=>u.aniversario===md);const upcoming=usersCache.filter(u=>u.aniversario).map(u=>{const [m,d]=u.aniversario.split('-').map(Number);let dt=new Date(now.getFullYear(),m-1,d);if(dateKey(dt)<dateKey(now))dt=new Date(now.getFullYear()+1,m-1,d);return {...u,_next:dt};}).sort((a,b)=>a._next-b._next).slice(0,3);if(today.length){host.classList.add('birthday-today');host.innerHTML=`<b>🎂 Aniversariante${today.length>1?'s':''} do dia</b><h3>${today.map(u=>escapeHtml(u.nome||u.email||'Integrante')).join(' • ')}</h3><p>Que Deus abençoe grandemente ${today.length>1?'suas vidas':'sua vida'}! 🙏🎉</p>`;}else{host.classList.remove('birthday-today');host.innerHTML=`<b>🎉 Próximos aniversariantes</b>${upcoming.length?upcoming.map(u=>`<div class="birthday-row"><span>${escapeHtml(u.nome||u.email||'Integrante')}</span><strong>${escapeHtml(formatBirthday(u.aniversario))}</strong></div>`).join(''):'<p class="muted">Nenhum aniversário cadastrado ainda.</p>'}`;}}
 async function renderPrayerCard(){
   const host=$('prayer-card');if(!host||!currentUser)return;const today=dateKey(new Date());let purpose='Ore pelo nosso ministério, pelas famílias, pelos cultos e para que tudo seja feito para a glória de Deus.';try{const cfg=await getDoc(doc(db,'configuracoes','oracao'));if(cfg.exists()&&cfg.data().proposito)purpose=cfg.data().proposito;}catch{}
   let prayed=false;try{const d=await getDoc(doc(db,'oracoes',`${currentUser.uid}_${today}`));prayed=d.exists();}catch{}
@@ -307,4 +336,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=9.3').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=9.3.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
