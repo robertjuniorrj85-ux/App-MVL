@@ -2880,6 +2880,7 @@ async function sendChat(scale) {
     );
 
     if (recipients.length) {
+
       createNotifications(
         recipients,
         `Chat • ${scale.evento}`,
@@ -2889,6 +2890,18 @@ async function sendChat(scale) {
       ).catch(erro => {
         console.error(
           'Falha na notificação interna do chat:',
+          erro
+        );
+      });
+
+      enviarPushMVL(
+        'chat_escala',
+        `Chat • ${scale.evento}`,
+        `${currentUserData.nome || currentUser.email}: ${mensagem.slice(0, 120)}`,
+        recipients
+      ).catch(erro => {
+        console.error(
+          'Falha no push do chat:',
           erro
         );
       });
