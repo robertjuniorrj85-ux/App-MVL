@@ -154,3 +154,13 @@ nav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:#0b0b0b;border-
 .birthday-row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #242424}
 .birthday-row:last-child{border-bottom:0}.birthday-row strong{white-space:nowrap}
 .birthday-field{display:grid;gap:7px;color:#ddd}
+
+/* V9.3.2 - lembretes e visualização administrativa de orações */
+.reminder-panel{display:grid;gap:10px;margin-top:4px}
+.reminder-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border:1px solid var(--border,#ddd);border-radius:10px}
+.reminder-row span{display:flex;align-items:center;gap:8px}
+.reminder-row input[type="time"]{width:112px}
+.prayer-view-btn{margin-top:10px;width:100%}
+.prayer-names{margin-top:10px;display:grid;gap:7px}
+.prayer-person{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:9px;background:rgba(255,255,255,.06)}
+@media(max-width:520px){.reminder-row{align-items:flex-start;flex-direction:column}.reminder-row input[type="time"]{width:100%}}
