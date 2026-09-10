@@ -1,4 +1,4 @@
-import { firebaseConfig } from './firebase-config.js?v=9.3.2';
+import { firebaseConfig } from './firebase-config.js?v=9.4';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
@@ -213,132 +213,98 @@ async function openRepertoireDetail(repId,backPage='repertorio'){
   items.forEach((it,i)=>{const s=songById(it.musicaId)||{};const card=document.createElement('div');card.className='item-card repertoire-song';card.innerHTML=`<div class="song-number">${i+1}</div><div><h3>${escapeHtml(s.titulo||'Música')}</h3>${it.cantorNome?`<div class="item-meta">🎤 ${escapeHtml(it.cantorNome)}</div>`:''}<div class="item-meta"><b>Tom:</b> ${escapeHtml(it.tom||s.tomOriginal||s.tom||'—')}</div>${s.observacoes?`<div class="item-meta">${escapeHtml(s.observacoes)}</div>`:''}<div class="item-actions">${safeUrl(it.ouvirLink)?`<a class="link-btn" href="${escapeAttr(it.ouvirLink)}" target="_blank" rel="noopener">▶️ Ouvir</a>`:''}${safeUrl(it.cifraLink)?`<a class="link-btn" href="${escapeAttr(it.cifraLink)}" target="_blank" rel="noopener">📄 Cifra</a>`:''}${safeUrl(it.multitrackLink)?`<a class="link-btn" href="${escapeAttr(it.multitrackLink)}" target="_blank" rel="noopener">🎚️ Multitrack</a>`:''}</div></div>`;listEl.appendChild(card);});
 }
 
-// ESCALAS + CHAT
+// ESCALAS + ENCONTROS + CHAT - V9.4
+function uidKey(){return 'e'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+function scaleEncounters(s={}){
+  if(Array.isArray(s.encontros)&&s.encontros.length)return s.encontros.map((e,i)=>({...e,id:e.id||`e${i+1}`,integranteIds:e.integranteIds||[],alertas:Array.isArray(e.alertas)?e.alertas:[]}));
+  if(s.data||s.evento){
+    const alertas=[];const l=s.lembretes||{};
+    if(l.vespera?.ativo&&s.data){const d=new Date(s.data+'T12:00:00');d.setDate(d.getDate()-1);alertas.push({id:uidKey(),data:dateKey(d),hora:l.vespera.hora||'18:00'});}
+    if(l.dia?.ativo&&s.data)alertas.push({id:uidKey(),data:s.data,hora:l.dia.hora||'08:00'});
+    return [{id:'principal',nome:s.evento||'Culto / Evento',data:s.data||'',horario:s.horario||'',integranteIds:s.integranteIds||[],alertas,principal:true}];
+  }
+  return [];
+}
+function scaleParticipants(s={}){return [...new Set(scaleEncounters(s).flatMap(e=>e.integranteIds||[]))];}
+function principalEncounter(s={}){const es=scaleEncounters(s);return es.find(e=>e.principal)||es.slice().sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).at(-1)||null;}
+function scaleSingerName(s={}){return s.cantorNome||userName(s.cantorId)||'Cantor não informado';}
+function scrollToAdminForm(){setTimeout(()=>adminPanel?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
+function addAlertRow(host,data={}){
+  const row=document.createElement('div');row.className='alert-row';row.dataset.id=data.id||uidKey();
+  row.innerHTML=`<span>🔔</span><input class="alert-date" type="date" value="${escapeAttr(data.data||'')}"><input class="alert-time" type="time" value="${escapeAttr(data.hora||'')}"><button type="button" class="danger remove-alert">Remover</button>`;
+  row.querySelector('.remove-alert').onclick=()=>row.remove();host.appendChild(row);
+}
+function addEncounterRow(data={}){
+  const host=$('encounter-list');if(!host)return;const id=data.id||uidKey();const box=document.createElement('div');box.className='encounter-editor';box.dataset.id=id;
+  box.innerHTML=`<div class="encounter-head"><b>📅 Encontro</b><button type="button" class="danger remove-encounter">Remover encontro</button></div><input class="enc-name" placeholder="Nome: Ensaio Vocal, Ensaio Geral, Culto..." value="${escapeAttr(data.nome||'')}"><div class="form-grid two"><input class="enc-date" type="date" value="${escapeAttr(data.data||'')}"><input class="enc-time" type="time" value="${escapeAttr(data.horario||'')}"></div><label class="checkbox-row"><input class="enc-principal" type="radio" name="enc-principal" ${data.principal?'checked':''}><span><b>Evento principal</b><br><small class="muted">Esta data aparece em “Minhas próximas escalas”.</small></span></label><div><small class="muted">Participantes deste encontro</small><div class="multi-list enc-members">${usersCache.map(u=>`<label class="multi-item"><input type="checkbox" value="${u.id}" ${(data.integranteIds||[]).includes(u.id)?'checked':''}> ${escapeHtml(u.nome||u.email||u.id)} ${u.funcao?`— ${escapeHtml(u.funcao)}`:''}</label>`).join('')}</div></div><div class="subpanel"><div class="subpanel-head"><b>🔔 Alertas personalizados</b><button type="button" class="secondary small-btn add-alert">+ Adicionar alerta</button></div><small class="muted">Escolha qualquer data e hora antes deste encontro. Você pode adicionar vários alertas.</small><div class="alert-list"></div></div>`;
+  box.querySelector('.remove-encounter').onclick=()=>{if(document.querySelectorAll('.encounter-editor').length===1){alert('A escala precisa ter pelo menos um encontro.');return;}box.remove();};
+  box.querySelector('.add-alert').onclick=()=>addAlertRow(box.querySelector('.alert-list'));
+  (data.alertas||[]).forEach(a=>addAlertRow(box.querySelector('.alert-list'),a));host.appendChild(box);
+}
+function collectEncounters(){
+  const boxes=[...document.querySelectorAll('.encounter-editor')];
+  return boxes.map((b,i)=>({id:b.dataset.id||uidKey(),nome:b.querySelector('.enc-name').value.trim(),data:b.querySelector('.enc-date').value,horario:b.querySelector('.enc-time').value,principal:b.querySelector('.enc-principal').checked,integranteIds:[...b.querySelectorAll('.enc-members input:checked')].map(x=>x.value),alertas:[...b.querySelectorAll('.alert-row')].map(r=>({id:r.dataset.id||uidKey(),data:r.querySelector('.alert-date').value,hora:r.querySelector('.alert-time').value})).filter(a=>a.data&&a.hora)}));
+}
+function validateEncounters(es){
+  if(!es.length)return 'Adicione pelo menos um encontro.';
+  for(const e of es){if(!e.nome||!e.data)return 'Informe o nome e a data de todos os encontros.';const end=e.data+'T'+(e.horario||'23:59');for(const a of e.alertas||[]){if((a.data+'T'+a.hora)>=end)return `O alerta de “${e.nome}” precisa ser antes do encontro.`;if((a.data+'T'+a.hora)<=new Date().toISOString().slice(0,16))return `O alerta de “${e.nome}” está em uma data/horário que já passou.`;}}
+  if(!es.some(e=>e.principal))es[es.length-1].principal=true;return '';
+}
 async function renderScales(editItem=null){
-  showSectionHeader('Escalas','Integrantes, repertório, confirmação de presença e chat da escala.');await refreshCaches();adminPanel.classList.toggle('hide',!isAdmin);
-  if(isAdmin){$('form-title').textContent=editItem?'Editar escala':'Nova escala';editingId=editItem?.id||null;cancelEditBtn.classList.toggle('hide',!editItem);saveBtn.textContent=editItem?'Atualizar':'Salvar';const d=editItem||{};const lemb=d.lembretes||{};dynamicForm.innerHTML=`<div class="form-grid"><input id="scale-date" type="date" value="${escapeAttr(d.data||'')}"><input id="scale-time" type="time" value="${escapeAttr(d.horario||'')}"><input id="scale-event" placeholder="Culto / Evento" value="${escapeAttr(d.evento||'')}"><select id="scale-rep"><option value="">Sem repertório vinculado</option>${repertoiresCache.map(r=>`<option value="${r.id}" ${d.repertorioId===r.id?'selected':''}>${escapeHtml(r.nome||'Repertório')}</option>`).join('')}</select><div><small class="muted">Integrantes escalados</small><div class="multi-list" id="member-options">${usersCache.map(u=>`<label class="multi-item"><input type="checkbox" value="${u.id}" ${(d.integranteIds||[]).includes(u.id)?'checked':''}> ${escapeHtml(u.nome||u.email||u.id)} ${u.funcao?`— ${escapeHtml(u.funcao)}`:''}</label>`).join('')}</div></div><label class="checkbox-row"><input id="notify-scaled" type="checkbox" ${editItem?'':'checked'}><span><b>Notificar integrantes ao salvar</b><br><small class="muted">Envia o aviso da nova escala sem interferir no salvamento.</small></span></label><div class="subpanel reminder-panel"><b>🔔 Lembretes da escala</b><label class="reminder-row"><span><input id="reminder-eve" type="checkbox" ${lemb.vespera?.ativo?'checked':''}> Avisar 1 dia antes</span><input id="reminder-eve-time" type="time" value="${escapeAttr(lemb.vespera?.hora||'18:00')}"></label><label class="reminder-row"><span><input id="reminder-day" type="checkbox" ${lemb.dia?.ativo?'checked':''}> Avisar no dia</span><input id="reminder-day-time" type="time" value="${escapeAttr(lemb.dia?.hora||'08:00')}"></label><small class="muted">Quem marcar “Não poderei” será excluído dos lembretes automáticos.</small></div></div>`;saveBtn.onclick=saveScale;}
-  addSearchBox('Pesquisar escala, evento ou data...',filterCards);
-  const visible=(isAdmin?scalesCache:scalesCache.filter(s=>(s.integranteIds||[]).includes(currentUser.uid))).sort((a,b)=>(b.data+(b.horario||'')).localeCompare(a.data+(a.horario||'')));listEl.innerHTML='';if(!visible.length){listEl.innerHTML=`<div class="empty">${isAdmin?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}for(const s of visible)listEl.appendChild(await buildScaleCard(s));
+  showSectionHeader('Escalas','Uma escala, vários encontros: ensaio vocal, ensaio geral, culto e outros.');await refreshCaches();adminPanel.classList.toggle('hide',!isAdmin);
+  if(isAdmin){
+    $('form-title').textContent=editItem?'Editar escala':'Nova escala';editingId=editItem?.id||null;cancelEditBtn.classList.toggle('hide',!editItem);saveBtn.textContent=editItem?'Atualizar':'Salvar';const d=editItem||{};
+    dynamicForm.innerHTML=`<div class="form-grid"><input id="scale-event" placeholder="Culto / Evento" value="${escapeAttr(d.evento||'')}"><select id="scale-singer"><option value="">Selecione o cantor da escala</option>${usersCache.map(u=>`<option value="${u.id}" ${d.cantorId===u.id?'selected':''}>🎤 ${escapeHtml(u.nome||u.email||u.id)}</option>`).join('')}</select><select id="scale-rep"><option value="">Sem repertório vinculado</option>${repertoiresCache.map(r=>`<option value="${r.id}" ${d.repertorioId===r.id?'selected':''}>${escapeHtml(r.nome||'Repertório')}</option>`).join('')}</select><label class="checkbox-row"><input id="notify-scaled" type="checkbox" ${editItem?'':'checked'}><span><b>Notificar participantes ao salvar</b><br><small class="muted">Envia o aviso sem interferir no salvamento da escala.</small></span></label><div class="subpanel encounters-panel"><div class="subpanel-head"><div><b>📅 Encontros desta escala</b><small class="muted block">Cada encontro tem data, horário, participantes, confirmação e alertas próprios.</small></div><button id="add-encounter" type="button" class="secondary small-btn">+ Adicionar encontro</button></div><div id="encounter-list"></div></div></div>`;
+    $('add-encounter').onclick=()=>addEncounterRow({principal:document.querySelectorAll('.encounter-editor').length===0});
+    const es=scaleEncounters(d);if(es.length)es.forEach(addEncounterRow);else addEncounterRow({nome:'Culto / Evento',principal:true});saveBtn.onclick=saveScale;if(editItem)scrollToAdminForm();
+  }
+  addSearchBox('Pesquisar cantor, escala, encontro ou data...',filterCards);
+  const visible=(isAdmin?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid))).sort((a,b)=>{const pa=principalEncounter(a),pb=principalEncounter(b);return ((pb?.data||'')+(pb?.horario||'')).localeCompare((pa?.data||'')+(pa?.horario||''));});
+  listEl.innerHTML='';if(!visible.length){listEl.innerHTML=`<div class="empty">${isAdmin?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}for(const s of visible)listEl.appendChild(await buildScaleCard(s));
 }
 async function saveScale(){
-  const integranteIds=[...document.querySelectorAll('#member-options input:checked')].map(x=>x.value);
-  const data=$('scale-date').value,horario=$('scale-time').value,evento=$('scale-event').value.trim(),repertorioId=$('scale-rep').value;
-  if(!data||!evento){alert('Informe a data e o evento.');return;}
-  const lembretes={
-    vespera:{ativo:$('reminder-eve').checked,hora:$('reminder-eve-time').value||'18:00'},
-    dia:{ativo:$('reminder-day').checked,hora:$('reminder-day-time').value||'08:00'}
-  };
-  const payload={data,horario,evento,repertorioId,integranteIds,lembretes};const notifyNow=$('notify-scaled').checked;let scaleId=editingId;
-  saveBtn.disabled=true;
-  try{
-    if(editingId){
-      await updateDoc(doc(db,'escalas',editingId),{...payload,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});
-    }else{
-      const ref=await addDoc(collection(db,'escalas'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});scaleId=ref.id;
-    }
-  }catch(e){
-    console.error('Falha ao salvar escala',e);alert('Não foi possível salvar a escala.');saveBtn.disabled=false;return;
-  }
-
-  alert('Escala salva com sucesso.');
-  editingId=null;
-  await refreshCaches();
-  renderScales().catch(e=>console.error('Atualização da lista de escalas',e));
-  saveBtn.disabled=false;
-
-  const texto=`${evento} — ${dateBR(data)}${horario?' às '+horario:''}.`;
-  if(notifyNow&&integranteIds.length){
-    createNotifications(integranteIds,'Nova escala MVL',texto,'escala',scaleId).catch(e=>console.error('Notificação interna da escala',e));
-    enviarPushMVL('escala','Nova escala MVL',texto,integranteIds).catch(e=>console.error('Push da escala',e));
-  }
-  syncScaleReminder({id:scaleId,...payload}).catch(e=>console.error('Sincronização de lembretes',e));
+  const evento=$('scale-event').value.trim(),cantorId=$('scale-singer').value,repertorioId=$('scale-rep').value,encontros=collectEncounters();
+  if(!evento||!cantorId){alert('Informe o evento e selecione o cantor da escala.');return;}const err=validateEncounters(encontros);if(err){alert(err);return;}
+  const integranteIds=[...new Set(encontros.flatMap(e=>e.integranteIds||[]))];if(!integranteIds.includes(cantorId))integranteIds.push(cantorId);
+  const principal=encontros.find(e=>e.principal)||encontros[encontros.length-1];const payload={evento,cantorId,cantorNome:userName(cantorId),repertorioId,encontros,integranteIds,data:principal.data,horario:principal.horario||'',lembretes:{}};const notifyNow=$('notify-scaled').checked;let scaleId=editingId;
+  saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'escalas',editingId),{...payload,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});else{const ref=await addDoc(collection(db,'escalas'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});scaleId=ref.id;}}catch(e){console.error('Falha ao salvar escala',e);alert('Não foi possível salvar a escala.');saveBtn.disabled=false;return;}
+  alert('Escala salva com sucesso.');editingId=null;await refreshCaches();renderScales().catch(e=>console.error('Atualização da lista de escalas',e));saveBtn.disabled=false;
+  const texto=`${evento} • ${userName(cantorId)} — ${dateBR(principal.data)}${principal.horario?' às '+principal.horario:''}.`;
+  if(notifyNow&&integranteIds.length){createNotifications(integranteIds,'Nova escala MVL',texto,'escala',scaleId).catch(e=>console.error('Notificação interna da escala',e));enviarPushMVL('escala','Nova escala MVL',texto,integranteIds).catch(e=>console.error('Push da escala',e));}
+  syncScaleReminder({id:scaleId,...payload}).catch(e=>console.error('Sincronização de encontros/alertas',e));
 }
-
-
-async function syncAllScheduledData(){
-  if(!isAdmin)return;
-  await syncBirthdaysForPush();
-  for(const scale of scalesCache){
-    await syncScaleReminder(scale);
-    try{
-      const snap=await getDocs(collection(db,'escalas',scale.id,'confirmacoes'));
-      for(const d of snap.docs){const x=d.data();if(x?.usuarioId)await syncScaleConfirmationAsAdmin(scale.id,x.usuarioId,x.status||'');}
-    }catch(e){console.warn('Confirmações para lembretes',scale.id,e);}
-  }
-}
-async function syncScaleConfirmationAsAdmin(scaleId,usuarioId,status){
-  if(!isAdmin)return false;
-  try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync_admin',escalaId,usuarioId,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}
-}
-
-async function syncScaleReminder(scale){
-  if(!isAdmin||!scale?.id)return false;
-  try{
-    const idToken=await currentUser.getIdToken();
-    const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_sync',escala:{id:scale.id,data:scale.data||'',horario:scale.horario||'',evento:scale.evento||'Escala',integranteIds:scale.integranteIds||[],lembretes:scale.lembretes||{}}})});
-    const j=await r.json().catch(()=>({ok:false}));return !!j.ok;
-  }catch(e){console.warn('escala_sync',e);return false;}
-}
-
-async function syncScaleDelete(scaleId){
-  if(!isAdmin||!scaleId)return false;
-  try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_delete',escalaId:scaleId})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('escala_delete',e);return false;}
-}
-
-async function syncScaleConfirmation(scaleId,status){
-  try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync',escalaId:scaleId,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('confirmacao_sync',e);return false;}
-}
-
+async function syncAllScheduledData(){if(!isAdmin)return;await syncBirthdaysForPush();for(const scale of scalesCache){await syncScaleReminder(scale);try{const snap=await getDocs(collection(db,'escalas',scale.id,'confirmacoes'));for(const d of snap.docs){const x=d.data();if(x?.usuarioId)await syncScaleConfirmationAsAdmin(scale.id,x.usuarioId,x.encontros||{},x.status||'');}}catch(e){console.warn('Confirmações para lembretes',scale.id,e);}}}
+async function syncScaleConfirmationAsAdmin(scaleId,usuarioId,encontros,status=''){if(!isAdmin)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync_admin',escalaId,usuarioId,encontros,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
+async function syncScaleReminder(scale){if(!isAdmin||!scale?.id)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_sync',escala:{id:scale.id,evento:scale.evento||'Escala',cantorNome:scaleSingerName(scale),integranteIds:scaleParticipants(scale),encontros:scaleEncounters(scale)}})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('escala_sync',e);return false;}}
+async function syncScaleDelete(scaleId){if(!isAdmin||!scaleId)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_delete',escalaId})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
+async function syncScaleConfirmation(scaleId,encontros,status=''){try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync',escalaId,encontros,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
+async function getMyConfirmation(s){const c=await getDoc(doc(db,'escalas',s.id,'confirmacoes',currentUser.uid)).catch(()=>null);return c?.exists()?c.data():{};}
+function encounterStatusHtml(st){return st==='confirmado'?'<span class="status-pill ok">Confirmado</span>':st==='nao_posso'?'<span class="status-pill no">Não poderei</span>':'<span class="status-pill">Aguardando</span>';}
 async function buildScaleCard(s){
-  const card=document.createElement('div');card.className='item-card scale-card';const members=(s.integranteIds||[]).map(userName);const rep=repById(s.repertorioId);let confirmation='';
-  if(!isAdmin&&(s.integranteIds||[]).includes(currentUser.uid)){const c=await getDoc(doc(db,'escalas',s.id,'confirmacoes',currentUser.uid)).catch(()=>null);const st=c?.exists()?c.data().status:'';confirmation=st==='confirmado'?'<span class="status-pill ok">Presença confirmada</span>':st==='nao_posso'?'<span class="status-pill no">Não poderá participar</span>':'<span class="status-pill">Aguardando confirmação</span>';}
-  let repHtml='';if(rep){const itens=(rep.musicaItens||legacyRepItems(rep)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));repHtml=`<div class="scale-repertoire"><b>🎵 REPERTÓRIO</b>${itens.slice(0,8).map((it,i)=>{const song=songById(it.musicaId)||{};return `<button class="scale-song" data-rep="${rep.id}">${i+1}. ${escapeHtml(song.titulo||'Música')} <small>${escapeHtml(it.tom||song.tomOriginal||'')}</small></button>`;}).join('')}<button class="confirm-btn rep-btn">Abrir repertório completo</button></div>`;}
-  card.innerHTML=`<h3>${escapeHtml(s.evento||'Escala')}</h3><div class="item-meta"><b>Data:</b> ${dateBR(s.data)} ${escapeHtml(s.horario||'')}</div>${repHtml}${isAdmin?`<div class="item-meta"><b>Escalados:</b> ${escapeHtml(members.join(', ')||'Nenhum')}</div>`:''}${confirmation}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${!isAdmin&&s.integranteIds?.includes(currentUser.uid)?'<button class="confirm-btn yes-btn">Confirmar presença</button><button class="decline-btn no-btn">Não poderei</button>':''}${isAdmin?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
-  card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas'));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas'));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelector('.yes-btn')?.addEventListener('click',()=>setConfirmation(s,'confirmado'));card.querySelector('.no-btn')?.addEventListener('click',()=>setConfirmation(s,'nao_posso'));card.querySelector('.edit-scale')?.addEventListener('click',()=>renderScales(s));card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
+  const card=document.createElement('div');card.className='item-card scale-card';const rep=repById(s.repertorioId),es=scaleEncounters(s);const mine=!isAdmin?await getMyConfirmation(s):{};let repHtml='';
+  if(rep){const itens=(rep.musicaItens||legacyRepItems(rep)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));repHtml=`<div class="scale-repertoire"><b>🎵 REPERTÓRIO</b>${itens.slice(0,8).map((it,i)=>{const song=songById(it.musicaId)||{};return `<button class="scale-song">${i+1}. ${escapeHtml(song.titulo||'Música')} <small>${escapeHtml(it.tom||song.tomOriginal||'')}</small></button>`;}).join('')}<button class="confirm-btn rep-btn">Abrir repertório completo</button></div>`;}
+  const encountersHtml=es.map(e=>{const st=mine.encontros?.[e.id]||(e.id==='principal'?mine.status:'');const names=(e.integranteIds||[]).map(userName);const involved=(e.integranteIds||[]).includes(currentUser.uid);return `<div class="encounter-card ${e.principal?'principal':''}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${!isAdmin&&involved?encounterStatusHtml(st):''}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div>${isAdmin?`<div class="item-meta"><b>Participantes:</b> ${escapeHtml(names.join(', ')||'Nenhum')}</div>`:''}${!isAdmin&&involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;}).join('');
+  card.innerHTML=`<div class="scale-headline"><div><h3>🎤 ${escapeHtml(scaleSingerName(s))}</h3><div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${isAdmin?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
+  card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas'));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas'));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelectorAll('.enc-yes').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'confirmado'));card.querySelectorAll('.enc-no').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'nao_posso'));card.querySelector('.edit-scale')?.addEventListener('click',()=>renderScales(s));card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
 }
-async function deleteScaleCascade(scaleId){
-  const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();syncScaleDelete(scaleId).catch(()=>{});
+async function deleteScaleCascade(scaleId){const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();syncScaleDelete(scaleId).catch(()=>{});}
+async function setEncounterConfirmation(scale,encounterId,status){
+  let data={};try{const ref=doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid);const old=await getDoc(ref);data=old.exists()?old.data():{};const encontros={...(data.encontros||{}),[encounterId]:status};await setDoc(ref,{usuarioId:currentUser.uid,usuarioNome:currentUserData.nome||currentUser.email,encontros,atualizadoEm:serverTimestamp()},{merge:true});data.encontros=encontros;}catch(e){console.error(e);alert('Não foi possível registrar sua resposta.');return;}
+  alert(status==='confirmado'?'Presença confirmada neste encontro.':'Resposta registrada neste encontro.');renderScales().catch(()=>{});syncScaleConfirmation(scale.id,data.encontros||{}).catch(()=>{});
+  const enc=scaleEncounters(scale).find(e=>e.id===encounterId);const admins=usersCache.filter(u=>u.role==='admin').map(u=>u.id).filter(id=>id!==currentUser.uid);if(admins.length){const texto=`${currentUserData.nome||currentUser.email} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;createNotifications(admins,'Resposta de escala',texto,'confirmacao_escala',scale.id).catch(()=>{});enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins).catch(()=>{});}
 }
-async function setConfirmation(scale,status){
-  try{
-    await setDoc(doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid),{
-      status,
-      usuarioId:currentUser.uid,
-      usuarioNome:currentUserData.nome||currentUser.email,
-      atualizadoEm:serverTimestamp()
-    },{merge:true});
-  }catch(e){
-    console.error('Falha ao gravar confirmação',e);
-    alert('Não foi possível registrar sua resposta.');
-    return;
-  }
-
-  alert(status==='confirmado'?'Presença confirmada.':'Resposta registrada.');
-  renderScales().catch(e=>console.error('Atualização da escala',e));
-  syncScaleConfirmation(scale.id,status).catch(()=>{});
-
-  const admins=usersCache.filter(u=>u.role==='admin').map(u=>u.id).filter(id=>id!==currentUser.uid);
-  if(!admins.length)return;
-  const texto=`${currentUserData.nome||currentUser.email} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${scale.evento}.`;
-  createNotifications(admins,'Resposta de escala',texto,'confirmacao_escala',scale.id)
-    .catch(e=>console.error('Notificação interna da confirmação',e));
-  enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins)
-    .catch(e=>console.error('Push da confirmação',e));
-}
-
+// Compatibilidade com botões/escala antiga
+async function setConfirmation(scale,status){const e=principalEncounter(scale);if(e)return setEncounterConfirmation(scale,e.id,status);}
 async function renderNextScale(){
-  if(!currentUser)return;await refreshCaches();const today=dateKey(new Date());const mine=scalesCache.filter(s=>(s.integranteIds||[]).includes(currentUser.uid)&&s.data>=today).sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).slice(0,4);const el=$('next-scale-content');
-  if(!mine.length){el.innerHTML='<p class="muted">Nenhuma escala futura encontrada.</p>';return;}
-  el.innerHTML='<div class="upcoming-scales">'+mine.map((s,i)=>{const rep=repById(s.repertorioId);return `<div class="upcoming-scale ${i===0?'next':''}"><b>${escapeHtml(s.evento||'Escala')}</b><span>${dateBR(s.data)} ${escapeHtml(s.horario||'')}</span>${rep?`<small>🎵 ${escapeHtml(rep.nome||'Repertório')}</small>`:''}<div class="item-actions">${rep?`<button class="link-btn home-rep" data-id="${s.id}">Repertório</button>`:''}<button class="link-btn home-chat" data-id="${s.id}">💬 Abrir chat</button></div></div>`;}).join('')+'</div>';
-  el.querySelectorAll('.home-chat').forEach(b=>b.onclick=()=>openScaleChat(b.dataset.id));el.querySelectorAll('.home-rep').forEach(b=>{const sc=mine.find(x=>x.id===b.dataset.id);b.onclick=()=>openRepertoireDetail(sc.repertorioId,'escalas');});
+  if(!currentUser)return;await refreshCaches();const now=dateKey(new Date());const mine=scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid)).map(s=>({s,p:principalEncounter(s)})).filter(x=>x.p&&x.p.data>=now).sort((a,b)=>(a.p.data+(a.p.horario||'')).localeCompare(b.p.data+(b.p.horario||''))).slice(0,6);const el=$('next-scale-content');if(!mine.length){el.innerHTML='<p class="muted">Nenhuma escala futura encontrada.</p>';return;}
+  el.innerHTML='<div class="upcoming-scales">'+mine.map((x,i)=>`<button class="upcoming-scale scale-summary ${i===0?'next':''}" data-id="${x.s.id}"><b>🎤 ${escapeHtml(scaleSingerName(x.s))}</b><span>${dateBR(x.p.data)}${x.s.evento?' — '+escapeHtml(x.s.evento):''}</span><small>Toque para abrir a escala ›</small></button>`).join('')+'</div>';el.querySelectorAll('.scale-summary').forEach(b=>b.onclick=()=>openScaleDetail(b.dataset.id));
 }
+async function openScaleDetail(scaleId){await refreshCaches();const s=scalesCache.find(x=>x.id===scaleId);if(!s)return;currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,s.evento||'Escala');adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';listEl.innerHTML='';listEl.appendChild(await buildScaleCard(s));$('scale-detail-back').onclick=goHome;}
+const MVL_EMOJIS=['🙏','🙌','❤️','👏','🔥','🎵','🎤','🎸','🥁','🎹','😂','😊','👍','✅','🎶','💪','🤝','🎉'];
 async function openScaleChat(scaleId){
-  await refreshCaches();const scale=scalesCache.find(s=>s.id===scaleId);if(!scale){alert('Escala não encontrada.');return;}const allowed=isAdmin||(scale.integranteIds||[]).includes(currentUser.uid);if(!allowed){alert('Este chat é exclusivo para quem está nesta escala.');return;}currentPage='chat';pushNav('escalas');homeView.classList.add('hide');sectionView.classList.remove('hide');showSectionHeader(`Chat • ${scale.evento}`,`${dateBR(scale.data)} ${scale.horario||''} • apenas integrantes da escala`);adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<button id="chat-back" class="back-inline">← Voltar para escalas</button><div id="chat-list" class="chat-list"></div><div class="chat-compose"><textarea id="chat-input" placeholder="Digite uma dúvida, sugestão ou mensagem..."></textarea><button id="chat-send" class="primary">Enviar</button></div>`;listEl.innerHTML='';$('chat-back').onclick=()=>openSection('escalas');$('chat-send').onclick=()=>sendChat(scale);if(chatUnsub)chatUnsub();chatUnsub=onSnapshot(collection(db,'escalas',scaleId,'chat'),snap=>{const items=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>createdMs(a)-createdMs(b));const box=$('chat-list');if(!box)return;box.innerHTML=items.length?'':'<div class="empty">Nenhuma mensagem ainda. Comece a conversa.</div>';items.forEach(m=>{const own=m.autorId===currentUser.uid;const u=usersCache.find(x=>x.id===m.autorId);const color=u?.chatColor||'#9b2b2b';const node=document.createElement('div');node.className=`chat-message ${own?'mine':''}`;node.style.setProperty('--chat-color',color);node.innerHTML=`<b style="color:${escapeAttr(color)}">${escapeHtml(m.autorNome||'Integrante')}</b><div>${escapeHtml(m.mensagem||'')}</div><small>${escapeHtml(fmtTs(m.criadoEm))}</small>${isAdmin?'<button class="chat-delete" title="Excluir mensagem">🗑️ Excluir</button>':''}`;node.querySelector('.chat-delete')?.addEventListener('click',async()=>{if(confirm('Excluir esta mensagem do chat?'))await deleteDoc(doc(db,'escalas',scaleId,'chat',m.id));});box.appendChild(node);});box.scrollTop=box.scrollHeight;},e=>console.error('chat',e));
+  await refreshCaches();const scale=scalesCache.find(s=>s.id===scaleId);if(!scale){alert('Escala não encontrada.');return;}const allowed=isAdmin||scaleParticipants(scale).includes(currentUser.uid);if(!allowed){alert('Este chat é exclusivo para quem está nesta escala.');return;}currentPage='chat';pushNav('escalas');homeView.classList.add('hide');sectionView.classList.remove('hide');showSectionHeader(`Chat • ${scaleSingerName(scale)}`,`${scale.evento||'Escala'} • todos os envolvidos`);adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<button id="chat-back" class="back-inline">← Voltar para escalas</button><div id="chat-list" class="chat-list"></div><div id="emoji-panel" class="emoji-panel hide">${MVL_EMOJIS.map(e=>`<button type="button" class="emoji-choice">${e}</button>`).join('')}</div><div class="chat-compose"><button id="emoji-btn" class="emoji-btn" type="button" title="Emojis">😊</button><textarea id="chat-input" placeholder="Digite uma dúvida, sugestão ou mensagem..."></textarea><button id="chat-send" class="primary">Enviar</button></div>`;listEl.innerHTML='';$('chat-back').onclick=()=>openSection('escalas');$('chat-send').onclick=()=>sendChat(scale);$('emoji-btn').onclick=()=>$('emoji-panel').classList.toggle('hide');document.querySelectorAll('.emoji-choice').forEach(b=>b.onclick=()=>{const input=$('chat-input');input.value+=b.textContent;input.focus();});if(chatUnsub)chatUnsub();chatUnsub=onSnapshot(collection(db,'escalas',scaleId,'chat'),snap=>{const items=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>createdMs(a)-createdMs(b));const box=$('chat-list');if(!box)return;box.innerHTML=items.length?'':'<div class="empty">Nenhuma mensagem ainda. Comece a conversa.</div>';items.forEach(m=>{const own=m.autorId===currentUser.uid,u=usersCache.find(x=>x.id===m.autorId),color=u?.chatColor||'#9b2b2b',node=document.createElement('div');node.className=`chat-message ${own?'mine':''}`;node.style.setProperty('--chat-color',color);node.innerHTML=`<b style="color:${escapeAttr(color)}">${escapeHtml(m.autorNome||'Integrante')}</b><div>${escapeHtml(m.mensagem||'')}</div><small>${escapeHtml(fmtTs(m.criadoEm))}</small>${isAdmin?'<button class="chat-delete" title="Excluir mensagem">🗑️ Excluir</button>':''}`;node.querySelector('.chat-delete')?.addEventListener('click',async()=>{if(confirm('Excluir esta mensagem do chat?'))await deleteDoc(doc(db,'escalas',scaleId,'chat',m.id));});box.appendChild(node);});box.scrollTop=box.scrollHeight;},e=>console.error('chat',e));
 }
-async function sendChat(scale){
-  const input=$('chat-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';
-  try{await addDoc(collection(db,'escalas',scale.id,'chat'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()});const recipients=[...(scale.integranteIds||[]),...usersCache.filter(u=>u.role==='admin').map(u=>u.id)].filter((v,i,a)=>v!==currentUser.uid&&a.indexOf(v)===i);if(recipients.length){createNotifications(recipients,`Chat • ${scale.evento}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,'chat_escala',scale.id).catch(e=>console.error('Notificação interna chat',e));enviarPushMVL('chat_escala',`Chat • ${scale.evento}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,recipients).catch(e=>console.error('Push chat',e));}}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}
-}
+async function sendChat(scale){const input=$('chat-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';try{await addDoc(collection(db,'escalas',scale.id,'chat'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()});const recipients=[...scaleParticipants(scale),...usersCache.filter(u=>u.role==='admin').map(u=>u.id)].filter((v,i,a)=>v!==currentUser.uid&&a.indexOf(v)===i);if(recipients.length){createNotifications(recipients,`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,'chat_escala',scale.id).catch(()=>{});enviarPushMVL('chat_escala',`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,recipients).catch(()=>{});}}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
 
 // AGENDA
 async function renderAgenda(editItem=null){
@@ -354,7 +320,7 @@ async function saveAgenda(){
 async function renderCalendar(){
   showSectionHeader('Calendário','Toque em um dia para ver as atividades.');adminPanel.classList.add('hide');await refreshCaches();sectionSpecial.innerHTML=`<div class="calendar-head"><button id="cal-prev">‹</button><div id="cal-title" class="calendar-title"></div><button id="cal-next">›</button></div><div class="calendar-grid" id="calendar-grid"></div><div id="day-events" class="day-events"></div>`;$('cal-prev').onclick=()=>{calDate=new Date(calDate.getFullYear(),calDate.getMonth()-1,1);drawCalendar();};$('cal-next').onclick=()=>{calDate=new Date(calDate.getFullYear(),calDate.getMonth()+1,1);drawCalendar();};drawCalendar();
 }
-function eventDatesForUser(){const ag=agendasCache.filter(a=>isAdmin||a.todos===true||(a.destinatarios||[]).includes(currentUser.uid)).map(a=>({...a,kind:'Agenda'}));const sc=(isAdmin?scalesCache:scalesCache.filter(s=>(s.integranteIds||[]).includes(currentUser.uid))).map(s=>({...s,titulo:s.evento,kind:'Escala'}));return [...ag,...sc];}
+function eventDatesForUser(){const ag=agendasCache.filter(a=>isAdmin||a.todos===true||(a.destinatarios||[]).includes(currentUser.uid)).map(a=>({...a,kind:'Agenda'}));const sc=(isAdmin?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid))).flatMap(s=>scaleEncounters(s).map(e=>({...s,data:e.data,horario:e.horario,titulo:`${s.cantorNome||scaleSingerName(s)} • ${e.nome}`,kind:'Escala'})));return [...ag,...sc];}
 function drawCalendar(){const events=eventDatesForUser(),y=calDate.getFullYear(),m=calDate.getMonth();$('cal-title').textContent=calDate.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});const grid=$('calendar-grid'),weekdays=['D','S','T','Q','Q','S','S'];grid.innerHTML=weekdays.map(w=>`<div class="cal-week">${w}</div>`).join('');const first=new Date(y,m,1),start=new Date(y,m,1-first.getDay());for(let i=0;i<42;i++){const d=new Date(start);d.setDate(start.getDate()+i);const key=dateKey(d),has=events.some(e=>e.data===key),b=document.createElement('button');b.className='cal-day';if(d.getMonth()!==m)b.classList.add('out');if(key===dateKey(new Date()))b.classList.add('today');if(key===selectedDate)b.classList.add('selected');b.innerHTML=`${d.getDate()}${has?'<span class="cal-dot"></span>':''}`;b.onclick=()=>{selectedDate=key;drawCalendar();};grid.appendChild(b);}renderDayEvents(events.filter(e=>e.data===selectedDate));}
 function renderDayEvents(events){const el=$('day-events');el.innerHTML=`<h3>${dateBR(selectedDate)}</h3>`;if(!events.length){el.innerHTML+='<div class="empty">Nenhuma atividade neste dia.</div>';return;}events.forEach(e=>el.innerHTML+=`<div class="item-card"><span class="status-pill">${escapeHtml(e.kind)}</span><h3>${escapeHtml(e.titulo||e.evento||'Atividade')}</h3><div class="item-meta">${escapeHtml(e.horario||'')}</div>${e.local?`<div class="item-meta">📍 ${escapeHtml(e.local)}</div>`:''}</div>`);}
 
@@ -406,4 +372,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=9.3.2').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=9.4').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
