@@ -1,9 +1,10 @@
-import { firebaseConfig } from './firebase-config.js?v=9.6';
+import { firebaseConfig } from './firebase-config.js?v=9.6.2';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
   setPersistence, browserLocalPersistence, updatePassword,
-  reauthenticateWithCredential, EmailAuthProvider, updateProfile
+  reauthenticateWithCredential, EmailAuthProvider, updateProfile,
+  createUserWithEmailAndPassword, inMemoryPersistence
 } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-auth.js';
 import {
   getFirestore, doc, setDoc, getDoc, serverTimestamp, collection, addDoc,
@@ -14,6 +15,13 @@ const fbApp=initializeApp(firebaseConfig);
 const auth=getAuth(fbApp);
 const db=getFirestore(fbApp);
 setPersistence(auth,browserLocalPersistence).catch(()=>{});
+
+// V9.6.2 - instância isolada usada pelo Administrador principal para criar novos integrantes
+// sem encerrar a sessão administrativa atual.
+const memberCreatorApp=initializeApp(firebaseConfig,'mvl-member-creator');
+const memberCreatorAuth=getAuth(memberCreatorApp);
+const memberCreatorDb=getFirestore(memberCreatorApp);
+setPersistence(memberCreatorAuth,inMemoryPersistence).catch(()=>{});
 
 const $=id=>document.getElementById(id);
 const login=$('login'),appScreen=$('app'),email=$('email'),senha=$('senha'),entrar=$('entrar');
@@ -390,9 +398,114 @@ async function renderNotifications(){
 // MEMBROS E PERFIL
 function memberIcon(u={}){const f=String(u.funcao||'').toLowerCase();if(/tecl|piano|keyboard/.test(f))return '🎹';if(/bater|drum/.test(f))return '🥁';if(/guitarr|viol[aã]o|baixo|bass/.test(f))return '🎸';if(/cant|vocal|back|voz/.test(f))return '🎤';if(/som|t[eé]cnic|audio|mesa/.test(f))return '🎚️';return '👤';}
 async function renderMembers(){
-  showSectionHeader('Membros','Integrantes, equipes, funções, aniversários e permissões.');adminPanel.classList.add('hide');usersCache=await safeDocs('usuarios');addSearchBox('Pesquisar integrante, instrumento ou equipe...',filterCards);listEl.innerHTML='';if(!usersCache.length){listEl.innerHTML='<div class="empty">Nenhum integrante registrado.</div>';return;}
-  usersCache.sort((a,b)=>(a.nome||a.email||'').localeCompare(b.nome||b.email||'')).forEach(u=>{const card=document.createElement('div');card.className='item-card';const color=u.chatColor||'#9b2b2b',aniversario=u.aniversario?formatBirthday(u.aniversario):'',roleLabel=u.role==='admin'?'Administrador principal':u.role==='admin_limited'?'Administrador':'Integrante';card.innerHTML=`<h3><span class="member-color" style="background:${escapeAttr(color)}"></span>${memberIcon(u)} ${escapeHtml(u.nome||u.email||'Integrante')}</h3><div class="member-teams">${teamBadges(u)}</div><div class="item-meta">${escapeHtml(u.funcao||'Função não informada')}</div>${aniversario?`<div class="item-meta">🎂 Aniversário: ${escapeHtml(aniversario)}</div>`:''}${(canManage('membros')||isPrincipalAdmin)?`<div class="item-meta">${escapeHtml(u.email||'')}</div><span class="status-pill">${roleLabel}</span><div class="item-actions"><button class="edit-btn member-edit">Editar membro</button></div>`:''}`;card.querySelector('.member-edit')?.addEventListener('click',()=>editMember(u));listEl.appendChild(card);});
+  showSectionHeader('Membros','Integrantes, equipes, funções, aniversários e permissões.');
+  adminPanel.classList.add('hide');
+  usersCache=await safeDocs('usuarios');
+
+  sectionSpecial.innerHTML=isPrincipalAdmin
+    ? `<div class="member-add-panel"><button id="add-member-btn" class="primary">➕ Adicionar novo membro</button></div>`
+    : '';
+  $('add-member-btn')?.addEventListener('click',openNewMemberForm);
+
+  addSearchBox('Pesquisar integrante, instrumento ou equipe...',filterCards);
+  listEl.innerHTML='';
+  if(!usersCache.length){listEl.innerHTML='<div class="empty">Nenhum integrante registrado.</div>';return;}
+  usersCache.sort((a,b)=>(a.nome||a.email||'').localeCompare(b.nome||b.email||'')).forEach(u=>{
+    const card=document.createElement('div');
+    card.className='item-card';
+    const color=u.chatColor||'#9b2b2b',aniversario=u.aniversario?formatBirthday(u.aniversario):'',roleLabel=u.role==='admin'?'Administrador principal':u.role==='admin_limited'?'Administrador':'Integrante';
+    card.innerHTML=`<h3><span class="member-color" style="background:${escapeAttr(color)}"></span>${memberIcon(u)} ${escapeHtml(u.nome||u.email||'Integrante')}</h3><div class="member-teams">${teamBadges(u)}</div><div class="item-meta">${escapeHtml(u.funcao||'Função não informada')}</div>${aniversario?`<div class="item-meta">🎂 Aniversário: ${escapeHtml(aniversario)}</div>`:''}${(canManage('membros')||isPrincipalAdmin)?`<div class="item-meta">${escapeHtml(u.email||'')}</div><span class="status-pill">${roleLabel}</span><div class="item-actions"><button class="edit-btn member-edit">Editar membro</button></div>`:''}`;
+    card.querySelector('.member-edit')?.addEventListener('click',()=>editMember(u));
+    listEl.appendChild(card);
+  });
 }
+
+function openNewMemberForm(){
+  if(!isPrincipalAdmin)return;
+  sectionSpecial.innerHTML=`
+    <div class="admin-panel" id="new-member-panel">
+      <h3>➕ Adicionar novo membro</h3>
+      <p class="muted">Crie o acesso do integrante e já deixe função, equipe e aniversário cadastrados.</p>
+      <div class="form-grid">
+        <input id="new-member-name" placeholder="Nome do integrante">
+        <input id="new-member-email" type="email" autocomplete="off" placeholder="E-mail de acesso">
+        <input id="new-member-password" type="password" autocomplete="new-password" placeholder="Senha provisória (mínimo 6 caracteres)">
+        <input id="new-member-role" placeholder="Função / Instrumento">
+        <input id="new-member-birthday" type="date">
+        <label class="checkbox-row"><input id="new-team-mvl" type="checkbox" checked><span>MVL</span></label>
+        <label class="checkbox-row"><input id="new-team-ng" type="checkbox"><span>⚡ Nova Geração</span></label>
+        <label>Cor no chat<input id="new-member-color" type="color" value="#9b2b2b"></label>
+      </div>
+      <div class="form-actions">
+        <button id="create-member-btn" class="primary">Criar integrante</button>
+        <button id="cancel-new-member" class="secondary">Cancelar</button>
+      </div>
+      <p id="new-member-status" class="hint"></p>
+    </div>`;
+  $('cancel-new-member').onclick=()=>renderMembers();
+  $('create-member-btn').onclick=createNewMember;
+  $('new-member-name')?.focus();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+async function createNewMember(){
+  if(!isPrincipalAdmin)return;
+  const nome=$('new-member-name').value.trim();
+  const emailNovo=$('new-member-email').value.trim().toLowerCase();
+  const senhaNova=$('new-member-password').value;
+  const funcao=$('new-member-role').value.trim();
+  const aniversario=birthdayStorageValue($('new-member-birthday').value);
+  const chatColor=$('new-member-color').value||'#9b2b2b';
+  const equipes=[$('new-team-mvl').checked?'mvl':'',$('new-team-ng').checked?'nova_geracao':''].filter(Boolean);
+  const status=$('new-member-status');
+  const btn=$('create-member-btn');
+
+  if(!nome){status.textContent='Informe o nome do integrante.';status.className='hint error';return;}
+  if(!emailNovo){status.textContent='Informe o e-mail de acesso.';status.className='hint error';return;}
+  if(senhaNova.length<6){status.textContent='A senha provisória deve ter pelo menos 6 caracteres.';status.className='hint error';return;}
+  if(!equipes.length){status.textContent='Selecione pelo menos uma equipe.';status.className='hint error';return;}
+
+  btn.disabled=true;
+  status.textContent='Criando integrante...';
+  status.className='hint';
+  try{
+    // A criação usa uma instância separada do Firebase Auth para manter o administrador logado.
+    await signOut(memberCreatorAuth).catch(()=>{});
+    const cred=await createUserWithEmailAndPassword(memberCreatorAuth,emailNovo,senhaNova);
+    await setDoc(doc(memberCreatorDb,'usuarios',cred.user.uid),{
+      email:emailNovo,
+      nome,
+      funcao,
+      equipes,
+      aniversario,
+      chatColor,
+      role:'member',
+      adminPrincipal:false,
+      adminPermissions:{},
+      mustChangePassword:true,
+      criadoEm:serverTimestamp()
+    });
+    await signOut(memberCreatorAuth).catch(()=>{});
+    status.textContent='Integrante criado com sucesso.';
+    status.className='hint success';
+    await refreshCaches();
+    syncBirthdaysForPush().catch(()=>{});
+    setTimeout(()=>renderMembers(),500);
+  }catch(e){
+    console.error('Criar integrante',e);
+    const map={
+      'auth/email-already-in-use':'Este e-mail já possui um usuário cadastrado.',
+      'auth/invalid-email':'Digite um e-mail válido.',
+      'auth/weak-password':'A senha provisória é muito fraca.',
+      'auth/operation-not-allowed':'O cadastro por e-mail/senha não está habilitado no Firebase.'
+    };
+    status.textContent=map[e.code]||'Não foi possível criar o integrante.';
+    status.className='hint error';
+  }finally{
+    btn.disabled=false;
+  }
+}
+
 function formatBirthday(v=''){const parts=String(v).split('-');if(parts.length!==2)return v;return `${parts[1]}/${parts[0]}`;}
 function birthdayInputValue(v=''){return /^\d{2}-\d{2}$/.test(v)?`2000-${v}`:'';}
 function birthdayStorageValue(v=''){if(!v)return '';const p=v.split('-');return `${p[1]}-${p[2]}`;}
@@ -424,4 +537,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=9.6').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=9.6.2').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
