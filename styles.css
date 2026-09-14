@@ -177,6 +177,3 @@ nav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:#0b0b0b;border-
 /* V9.6 - Equipes, Nova Geração e administradores com permissões */
 .team-badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 7px;font-size:10px;font-weight:800;border:1px solid #444;background:#222;color:#ddd;margin:2px 3px 2px 0}.team-badge.nova_geracao{background:#30280d;border-color:#665516;color:#ffe68c}.team-badge.mvl{background:#251313;border-color:#5d2525;color:#ffd6d6}.member-teams{margin:5px 0}.member-team-inline{margin-left:auto;display:flex;flex-wrap:wrap;justify-content:flex-end}.multi-item{justify-content:flex-start}.scale-team-label{display:inline-block;font-size:10px;font-weight:800;border-radius:999px;padding:4px 8px;margin-bottom:5px;background:#251313;border:1px solid #5d2525;color:#ffd6d6}.scale-team-label.nova_geracao{background:#30280d;border-color:#665516;color:#ffe68c}.field-label{display:grid;gap:6px;color:#bbb}.permission-grid{display:grid;gap:6px;margin-top:8px}.admin-access-panel{border-color:#503e1d}.member-admin-editor{scroll-margin-top:70px}
 @media(min-width:620px){.permission-grid{grid-template-columns:1fr 1fr}}
-
-/* V9.6.2 */
-.member-add-panel{margin:0 0 12px}.member-add-panel .primary{width:100%}
