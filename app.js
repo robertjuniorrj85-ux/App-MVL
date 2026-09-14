@@ -45,12 +45,19 @@ const simpleSections={
 
 // V9.6 - equipes e administração com permissões
 const ADMIN_PERMISSION_LABELS={
-  escalas:'Escalas e encontros',repertorios:'Repertórios',musicas:'Músicas',cifras:'Cifras',agenda:'Agenda',avisos:'Avisos',multitracks:'Multitracks',membros:'Membros',oracoes:'Ver/gerenciar orações',chats:'Administrar chats',mensagens:'Comunicação privada',notificacoes:'Notificações'
+  escalas:'Escalas e encontros',repertorios:'Repertórios',musicas:'Músicas',cifras:'Cifras',agenda:'Agenda',avisos:'Avisos',multitracks:'Multitracks',membros:'Membros',oracoes:'Ver/gerenciar orações',chats:'Administrar chats',comunicacao:'Comunicação privada'
 };
-function isLimitedAdmin(){return currentUserData?.role==='admin_limited';}
-function canManage(area){return isPrincipalAdmin||(isLimitedAdmin()&&currentUserData?.adminPermissions?.[area]===true);}
+
+// FIX ADM V9.6.2: alinhado às regras atuais do Firestore.
+function userPermissions(u={}){
+  if(u.role==='admin'&&u.adminPrincipal!==true)return (u.permissoes&&typeof u.permissoes==='object')?u.permissoes:{};
+  if(u.role==='admin_limited')return (u.adminPermissions&&typeof u.adminPermissions==='object')?u.adminPermissions:{};
+  return {};
+}
+function isLimitedAdmin(){return currentUserData?.role==='admin_limited'||(currentUserData?.role==='admin'&&currentUserData?.adminPrincipal!==true);}
+function canManage(area){return isPrincipalAdmin||(isLimitedAdmin()&&userPermissions(currentUserData)?.[area]===true);}
 function simplePermission(page){return page==='avisos'?'avisos':page==='multitracks'?'multitracks':page;}
-function adminIdsFor(area){return usersCache.filter(u=>u.role==='admin'||(u.role==='admin_limited'&&u.adminPermissions?.[area]===true)).map(u=>u.id);}
+function adminIdsFor(area){return usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal===true)||(((u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited')&&userPermissions(u)?.[area]===true)).map(u=>u.id);}
 function memberTeams(u={}){const e=Array.isArray(u.equipes)?u.equipes.filter(x=>x==='mvl'||x==='nova_geracao'):[];return e.length?e:['mvl'];}
 function hasTeam(u,team){return memberTeams(u).includes(team);}
 function teamName(team){return team==='nova_geracao'?'⚡ Nova Geração':'MVL';}
@@ -59,7 +66,7 @@ function scaleTeam(s={}){return s.equipeResponsavel==='nova_geracao'?'nova_gerac
 function sortedUsersForTeam(team='mvl'){return usersCache.slice().sort((a,b)=>{const aa=hasTeam(a,team)?0:1,bb=hasTeam(b,team)?0:1;return aa-bb||(a.nome||a.email||'').localeCompare(b.nome||b.email||'');});}
 function memberOptionHtml(u,selected=[]){return `<label class="multi-item"><input type="checkbox" value="${u.id}" ${selected.includes(u.id)?'checked':''}> ${memberIcon(u)} <span>${escapeHtml(u.nome||u.email||u.id)} ${u.funcao?`— ${escapeHtml(u.funcao)}`:''}</span><span class="member-team-inline">${teamBadges(u)}</span></label>`;}
 function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';document.querySelectorAll('.encounter-editor').forEach(box=>{const selected=[...box.querySelectorAll('.enc-members input:checked')].map(x=>x.value);const host=box.querySelector('.enc-members');if(host)host.innerHTML=sortedUsersForTeam(team).map(u=>memberOptionHtml(u,selected)).join('');});}
-async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>u.role==='admin_limited').map(u=>({uid:u.id,permissions:u.adminPermissions||{}}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
+async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
 async function enviarPushMVL(tipo,titulo,mensagem,destinatarios=[]){
@@ -119,10 +126,10 @@ onAuthStateChanged(auth,async user=>{
     await setDoc(userRef,{email:user.email,nome:user.displayName||'',funcao:'',role:'member',mustChangePassword:true,criadoEm:serverTimestamp()});
     snap=await getDoc(userRef);
   }
-  currentUserData=snap.data()||{};isPrincipalAdmin=currentUserData.role==='admin';isAdmin=isPrincipalAdmin||currentUserData.role==='admin_limited';
+  currentUserData=snap.data()||{};isPrincipalAdmin=currentUserData.role==='admin'&&currentUserData.adminPrincipal===true;isAdmin=isPrincipalAdmin||isLimitedAdmin();
   await setDoc(userRef,{email:user.email,ultimoAcesso:serverTimestamp()},{merge:true}).catch(()=>{});
   updateRoleUI();saudacao.textContent='Olá, '+(currentUserData.nome||user.displayName||user.email.split('@')[0])+'!';
-  await refreshCaches();bindNotifications();identifyOneSignal();if(isPrincipalAdmin)syncAdminPermissionsForPush().catch(()=>{});await renderNextScale();goHome();
+  await refreshCaches();if(isPrincipalAdmin)await migrateLegacyAdminSchema();bindNotifications();identifyOneSignal();if(isPrincipalAdmin)syncAdminPermissionsForPush().catch(()=>{});await renderNextScale();goHome();
   if(canManage('escalas')||canManage('membros'))syncAllScheduledData().catch(e=>console.warn('Sincronização agendada',e));
   if(currentUserData.mustChangePassword===true)showPasswordModal();
 });
@@ -375,10 +382,10 @@ function renderDayEvents(events){const el=$('day-events');el.innerHTML=`<h3>${da
 
 // COMUNICAÇÃO PRIVADA
 async function renderCommunication(){
-  showSectionHeader('Comunicação','Mensagens privadas entre integrantes e liderança.');adminPanel.classList.remove('hide');$('form-title').textContent=canManage('mensagens')?'Nova mensagem':'Enviar mensagem à liderança';dynamicForm.innerHTML=`<div class="form-grid"><select id="msg-type"><option>Falta / ausência</option><option>Dúvida</option><option>Pedido</option><option>Observação</option><option>Outro</option></select><textarea id="msg-body" placeholder="Escreva sua mensagem"></textarea></div>`;saveBtn.onclick=sendMessage;await loadMessages();
+  showSectionHeader('Comunicação','Mensagens privadas entre integrantes e liderança.');adminPanel.classList.remove('hide');$('form-title').textContent=canManage('comunicacao')?'Nova mensagem':'Enviar mensagem à liderança';dynamicForm.innerHTML=`<div class="form-grid"><select id="msg-type"><option>Falta / ausência</option><option>Dúvida</option><option>Pedido</option><option>Observação</option><option>Outro</option></select><textarea id="msg-body" placeholder="Escreva sua mensagem"></textarea></div>`;saveBtn.onclick=sendMessage;await loadMessages();
 }
-async function sendMessage(){const tipo=$('msg-type').value,mensagem=$('msg-body').value.trim();if(!mensagem){alert('Escreva a mensagem.');return;}try{await addDoc(collection(db,'mensagens'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,autorEmail:currentUser.email,tipo,mensagem,status:'nova',criadoEm:serverTimestamp()});if(!canManage('mensagens')){const admins=adminIdsFor('mensagens');if(admins.length){createNotifications(admins,'Nova mensagem à liderança',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,140)}`,'mensagem','').catch(()=>{});enviarPushMVL('mensagem_admin','Nova mensagem no MVL',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,140)}`,admins).catch(()=>{});}}$('msg-body').value='';alert('Mensagem enviada.');await loadMessages();}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
-async function loadMessages(){const all=await safeDocs('mensagens'),visible=(canManage('mensagens')?all:all.filter(m=>m.autorId===currentUser.uid)).sort(byCreatedDesc);listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhuma mensagem ainda.</div>';return;}visible.forEach(m=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<span class="status-pill ${m.status==='nova'?'new':m.status==='resolvida'?'done':''}">${escapeHtml(m.status||'nova')}</span><h3>${escapeHtml(m.tipo||'Mensagem')}</h3>${canManage('mensagens')?`<div class="item-meta"><b>De:</b> ${escapeHtml(m.autorNome||m.autorEmail||'')}</div>`:''}<div class="item-meta">${escapeHtml(m.mensagem||'')}</div>${canManage('mensagens')?'<div class="item-actions"><button class="edit-btn">Marcar lida</button><button class="confirm-btn">Resolvida</button><button class="delete-btn msg-delete">Excluir</button></div>':''}`;if(canManage('mensagens')){card.querySelector('.edit-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'lida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.confirm-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'resolvida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.msg-delete').onclick=async()=>{if(confirm('Excluir esta mensagem privada?')){await deleteDoc(doc(db,'mensagens',m.id));loadMessages();}};}listEl.appendChild(card);});}
+async function sendMessage(){const tipo=$('msg-type').value,mensagem=$('msg-body').value.trim();if(!mensagem){alert('Escreva a mensagem.');return;}try{await addDoc(collection(db,'mensagens'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,autorEmail:currentUser.email,tipo,mensagem,status:'nova',criadoEm:serverTimestamp()});if(!canManage('comunicacao')){const admins=adminIdsFor('comunicacao');if(admins.length){createNotifications(admins,'Nova mensagem à liderança',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,140)}`,'mensagem','').catch(()=>{});enviarPushMVL('mensagem_admin','Nova mensagem no MVL',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,140)}`,admins).catch(()=>{});}}$('msg-body').value='';alert('Mensagem enviada.');await loadMessages();}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
+async function loadMessages(){const all=await safeDocs('mensagens'),visible=(canManage('comunicacao')?all:all.filter(m=>m.autorId===currentUser.uid)).sort(byCreatedDesc);listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhuma mensagem ainda.</div>';return;}visible.forEach(m=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<span class="status-pill ${m.status==='nova'?'new':m.status==='resolvida'?'done':''}">${escapeHtml(m.status||'nova')}</span><h3>${escapeHtml(m.tipo||'Mensagem')}</h3>${canManage('comunicacao')?`<div class="item-meta"><b>De:</b> ${escapeHtml(m.autorNome||m.autorEmail||'')}</div>`:''}<div class="item-meta">${escapeHtml(m.mensagem||'')}</div>${canManage('comunicacao')?'<div class="item-actions"><button class="edit-btn">Marcar lida</button><button class="confirm-btn">Resolvida</button><button class="delete-btn msg-delete">Excluir</button></div>':''}`;if(canManage('comunicacao')){card.querySelector('.edit-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'lida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.confirm-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'resolvida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.msg-delete').onclick=async()=>{if(confirm('Excluir esta mensagem privada?')){await deleteDoc(doc(db,'mensagens',m.id));loadMessages();}};}listEl.appendChild(card);});}
 
 // NOTIFICAÇÕES INTERNAS: 1 DOCUMENTO POR DESTINATÁRIO
 async function createNotifications(recipientIds,title,message,type,refId=''){
@@ -413,7 +420,7 @@ async function renderMembers(){
   usersCache.sort((a,b)=>(a.nome||a.email||'').localeCompare(b.nome||b.email||'')).forEach(u=>{
     const card=document.createElement('div');
     card.className='item-card';
-    const color=u.chatColor||'#9b2b2b',aniversario=u.aniversario?formatBirthday(u.aniversario):'',roleLabel=u.role==='admin'?'Administrador principal':u.role==='admin_limited'?'Administrador':'Integrante';
+    const color=u.chatColor||'#9b2b2b',aniversario=u.aniversario?formatBirthday(u.aniversario):'',roleLabel=(u.role==='admin'&&u.adminPrincipal===true)?'Administrador principal':((u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited')?'Administrador':'Integrante';
     card.innerHTML=`<h3><span class="member-color" style="background:${escapeAttr(color)}"></span>${memberIcon(u)} ${escapeHtml(u.nome||u.email||'Integrante')}</h3><div class="member-teams">${teamBadges(u)}</div><div class="item-meta">${escapeHtml(u.funcao||'Função não informada')}</div>${aniversario?`<div class="item-meta">🎂 Aniversário: ${escapeHtml(aniversario)}</div>`:''}${(canManage('membros')||isPrincipalAdmin)?`<div class="item-meta">${escapeHtml(u.email||'')}</div><span class="status-pill">${roleLabel}</span><div class="item-actions"><button class="edit-btn member-edit">Editar membro</button></div>`:''}`;
     card.querySelector('.member-edit')?.addEventListener('click',()=>editMember(u));
     listEl.appendChild(card);
@@ -481,6 +488,7 @@ async function createNewMember(){
       chatColor,
       role:'member',
       adminPrincipal:false,
+      permissoes:{},
       adminPermissions:{},
       mustChangePassword:true,
       criadoEm:serverTimestamp()
@@ -506,17 +514,48 @@ async function createNewMember(){
   }
 }
 
+async function migrateLegacyAdminSchema(){
+  if(!isPrincipalAdmin)return;
+  const legacy=usersCache.filter(u=>u.role==='admin_limited');
+  for(const u of legacy){
+    const perms=(u.adminPermissions&&typeof u.adminPermissions==='object')?u.adminPermissions:{};
+    try{await updateDoc(doc(db,'usuarios',u.id),{role:'admin',adminPrincipal:false,permissoes:perms,adminPermissions:perms,atualizadoEm:serverTimestamp()});}
+    catch(e){console.warn('Migração de administrador',u.id,e);}
+  }
+  if(legacy.length)await refreshCaches();
+}
+
 function formatBirthday(v=''){const parts=String(v).split('-');if(parts.length!==2)return v;return `${parts[1]}/${parts[0]}`;}
 function birthdayInputValue(v=''){return /^\d{2}-\d{2}$/.test(v)?`2000-${v}`:'';}
 function birthdayStorageValue(v=''){if(!v)return '';const p=v.split('-');return `${p[1]}-${p[2]}`;}
 async function syncBirthdaysForPush(){if(!canManage('membros'))return;try{const idToken=await currentUser.getIdToken();const pessoas=usersCache.map(u=>({uid:u.id,nome:u.nome||u.email||'Integrante',aniversario:u.aniversario||''}));await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'aniversario_sync',pessoas})});}catch(e){console.warn('Sincronização de aniversários',e);}}
 function editMember(u){
   if(!canManage('membros')&&!isPrincipalAdmin)return;
-  const teams=memberTeams(u),perms=u.adminPermissions||{},canRoles=isPrincipalAdmin&&u.id!==currentUser.uid;
-  sectionSpecial.innerHTML=`<div class="admin-panel member-admin-editor"><h3>Editar integrante</h3><div class="form-grid"><input id="member-name" placeholder="Nome" value="${escapeAttr(u.nome||'')}"><input id="member-role" placeholder="Função / Instrumento" value="${escapeAttr(u.funcao||'')}"><div class="subpanel"><b>Equipes que participa</b><label class="checkbox-row"><input id="team-mvl" type="checkbox" ${teams.includes('mvl')?'checked':''}><span>MVL</span></label><label class="checkbox-row"><input id="team-ng" type="checkbox" ${teams.includes('nova_geracao')?'checked':''}><span>⚡ Nova Geração</span></label></div><label class="birthday-field">🎂 Aniversário <input id="member-birthday" type="date" value="${escapeAttr(birthdayInputValue(u.aniversario||''))}"></label><small class="muted">O ano não será salvo; usamos somente dia e mês.</small><label class="color-field">Cor no Chat da Escala <input id="member-color" type="color" value="${escapeAttr(u.chatColor||'#9b2b2b')}"></label>${isPrincipalAdmin?`<div class="subpanel admin-access-panel"><b>👑 Acesso administrativo</b>${u.id===currentUser.uid?'<div class="readonly-note">Você é o Administrador principal e possui acesso total.</div>':`<select id="member-access"><option value="member" ${u.role!=='admin_limited'&&u.role!=='admin'?'selected':''}>Integrante</option><option value="admin_limited" ${u.role==='admin_limited'?'selected':''}>Administrador com permissões</option></select><div id="permission-list" class="permission-grid ${u.role==='admin_limited'?'':'hide'}">${Object.entries(ADMIN_PERMISSION_LABELS).map(([k,l])=>`<label class="checkbox-row"><input class="admin-perm" type="checkbox" value="${k}" ${perms[k]?'checked':''}><span>${escapeHtml(l)}</span></label>`).join('')}</div>`}</div>`:''}</div><div class="form-actions"><button id="member-save" class="primary">Salvar</button><button id="member-cancel" class="secondary">Cancelar</button></div></div>`;
+  const teams=memberTeams(u),perms=userPermissions(u),canRoles=isPrincipalAdmin&&u.id!==currentUser.uid;
+  sectionSpecial.innerHTML=`<div class="admin-panel member-admin-editor"><h3>Editar integrante</h3><div class="form-grid"><input id="member-name" placeholder="Nome" value="${escapeAttr(u.nome||'')}"><input id="member-role" placeholder="Função / Instrumento" value="${escapeAttr(u.funcao||'')}"><div class="subpanel"><b>Equipes que participa</b><label class="checkbox-row"><input id="team-mvl" type="checkbox" ${teams.includes('mvl')?'checked':''}><span>MVL</span></label><label class="checkbox-row"><input id="team-ng" type="checkbox" ${teams.includes('nova_geracao')?'checked':''}><span>⚡ Nova Geração</span></label></div><label class="birthday-field">🎂 Aniversário <input id="member-birthday" type="date" value="${escapeAttr(birthdayInputValue(u.aniversario||''))}"></label><small class="muted">O ano não será salvo; usamos somente dia e mês.</small><label class="color-field">Cor no Chat da Escala <input id="member-color" type="color" value="${escapeAttr(u.chatColor||'#9b2b2b')}"></label>${isPrincipalAdmin?`<div class="subpanel admin-access-panel"><b>👑 Acesso administrativo</b>${u.id===currentUser.uid?'<div class="readonly-note">Você é o Administrador principal e possui acesso total.</div>':`<select id="member-access"><option value="member" ${!((u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited')?'selected':''}>Integrante</option><option value="admin_limited" ${((u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited')?'selected':''}>Administrador com permissões</option></select><div id="permission-list" class="permission-grid ${((u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited')?'':'hide'}">${Object.entries(ADMIN_PERMISSION_LABELS).map(([k,l])=>`<label class="checkbox-row"><input class="admin-perm" type="checkbox" value="${k}" ${perms[k]?'checked':''}><span>${escapeHtml(l)}</span></label>`).join('')}</div>`}</div>`:''}</div><div class="form-actions"><button id="member-save" class="primary">Salvar</button><button id="member-cancel" class="secondary">Cancelar</button></div></div>`;
   $('member-access')?.addEventListener('change',()=>$('permission-list')?.classList.toggle('hide',$('member-access').value!=='admin_limited'));
   $('member-cancel').onclick=()=>renderMembers();
-  $('member-save').onclick=async()=>{const equipes=[$('team-mvl').checked?'mvl':'',$('team-ng').checked?'nova_geracao':''].filter(Boolean);if(!equipes.length){alert('Selecione pelo menos uma equipe para o integrante.');return;}const payload={nome:$('member-name').value.trim(),funcao:$('member-role').value.trim(),equipes,aniversario:birthdayStorageValue($('member-birthday').value),chatColor:$('member-color').value,atualizadoEm:serverTimestamp()};if(isPrincipalAdmin&&u.id!==currentUser.uid){const role=$('member-access')?.value||'member';payload.role=role;payload.adminPermissions=role==='admin_limited'?Object.fromEntries([...document.querySelectorAll('.admin-perm')].map(x=>[x.value,x.checked])):{};}await updateDoc(doc(db,'usuarios',u.id),payload);await refreshCaches();if(isPrincipalAdmin)await syncAdminPermissionsForPush();syncBirthdaysForPush().catch(()=>{});await renderMembers();};window.scrollTo({top:0,behavior:'smooth'});
+  $('member-save').onclick=async()=>{
+    const equipes=[$('team-mvl').checked?'mvl':'',$('team-ng').checked?'nova_geracao':''].filter(Boolean);
+    if(!equipes.length){alert('Selecione pelo menos uma equipe para o integrante.');return;}
+    const payload={nome:$('member-name').value.trim(),funcao:$('member-role').value.trim(),equipes,aniversario:birthdayStorageValue($('member-birthday').value),chatColor:$('member-color').value,atualizadoEm:serverTimestamp()};
+    if(isPrincipalAdmin&&u.id!==currentUser.uid){
+      const access=$('member-access')?.value||'member';
+      const perms=access==='admin_limited'?Object.fromEntries([...document.querySelectorAll('.admin-perm')].map(x=>[x.value,x.checked])):{};
+      payload.role=access==='admin_limited'?'admin':'member';
+      payload.adminPrincipal=false;
+      payload.permissoes=perms;
+      payload.adminPermissions=perms;
+    }
+    try{
+      await updateDoc(doc(db,'usuarios',u.id),payload);
+      await refreshCaches();
+      if(isPrincipalAdmin)await syncAdminPermissionsForPush();
+      syncBirthdaysForPush().catch(()=>{});
+      alert('Membro atualizado com sucesso.');
+      await renderMembers();
+    }catch(e){console.error('Salvar membro/permissões',e);alert('Não foi possível salvar as permissões do membro.');}
+  };window.scrollTo({top:0,behavior:'smooth'});
 }
 async function renderBirthdayCard(){const host=$('birthday-card');if(!host||!currentUser)return;if(!usersCache.length)await refreshCaches();const now=new Date(),md=`${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const today=usersCache.filter(u=>u.aniversario===md);const upcoming=usersCache.filter(u=>u.aniversario).map(u=>{const [m,d]=u.aniversario.split('-').map(Number);let dt=new Date(now.getFullYear(),m-1,d);if(dateKey(dt)<dateKey(now))dt=new Date(now.getFullYear()+1,m-1,d);return {...u,_next:dt};}).sort((a,b)=>a._next-b._next).slice(0,3);if(today.length){host.classList.add('birthday-today');host.innerHTML=`<b>🎂 Aniversariante${today.length>1?'s':''} do dia</b><h3>${today.map(u=>escapeHtml(u.nome||u.email||'Integrante')).join(' • ')}</h3><p>Que Deus abençoe grandemente ${today.length>1?'suas vidas':'sua vida'}! 🙏🎉</p>`;}else{host.classList.remove('birthday-today');host.innerHTML=`<b>🎉 Próximos aniversariantes</b>${upcoming.length?upcoming.map(u=>`<div class="birthday-row"><span>${escapeHtml(u.nome||u.email||'Integrante')}</span><strong>${escapeHtml(formatBirthday(u.aniversario))}</strong></div>`).join(''):'<p class="muted">Nenhum aniversário cadastrado ainda.</p>'}`;}}
 async function renderPrayerCard(){
