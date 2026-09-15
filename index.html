@@ -43,7 +43,7 @@
       <input id="senha" type="password" autocomplete="current-password" placeholder="Senha">
       <button id="entrar" class="primary">Entrar</button>
       <p id="login-status" class="hint"></p>
-      <div class="login-credit">Desenvolvido por <b>Robert Junior</b><br>© 2026 • Versão 10.2</div>
+      <div class="login-credit">Desenvolvido por <b>Robert Junior</b><br>© 2026 • Versão 10.3</div>
     </div>
   </section>
 
@@ -72,6 +72,10 @@
           <div id="next-scale-content"><p class="muted">Nenhuma escala encontrada.</p></div>
         </article>
 
+        <article id="prayer-card" class="prayer-card"><p class="muted">Carregando espaço de oração...</p></article>
+
+        <article id="birthday-card" class="birthday-card"><p class="muted">Carregando aniversariantes...</p></article>
+
         <button class="install install-trigger" style="display:none">
           ⬇ INSTALAR APLICATIVO
           <small>Adicione o MVL à sua tela inicial</small>
@@ -84,9 +88,7 @@
           <button class="menu-card" data-page="agenda"><span class="menu-icon">🗓️</span><b>Agenda</b></button>
           <button class="menu-card" data-page="avisos"><span class="menu-icon">📣</span><b>Avisos</b></button>
           <button class="menu-card" data-page="membros"><span class="menu-icon">👥</span><b>Membros</b></button>
-          <button class="menu-card" data-page="arquivos"><span class="menu-icon">📁</span><b>Arquivos</b></button>
           <button class="menu-card" data-page="multitracks"><span class="menu-icon">🎚️</span><b>Multitracks</b></button>
-          <button class="menu-card" data-page="links"><span class="menu-icon">🔗</span><b>Links Úteis</b></button>
         </div>
 
         <blockquote>
@@ -98,7 +100,7 @@
           <b>MVL – Ministério Vasos de Louvores</b>
           <span>Desenvolvido por Robert Junior</span>
           <span>© 2026</span>
-          <span>Versão 10.2</span>
+          <span>Versão 10.3</span>
         </footer>
       </section>
 
@@ -136,8 +138,7 @@
       <button class="nav-btn active" data-page="inicio">⌂<span>Início</span></button>
       <button class="nav-btn" data-page="escalas">👥<span>Escalas</span></button>
       <button class="nav-btn" data-page="repertorio">🎵<span>Repertório</span></button>
-      <button class="nav-btn" data-page="agenda">🗓️<span>Agenda</span></button>
-      <button id="nav-more" class="nav-btn" type="button">•••<span>Mais</span></button>
+      <button class="nav-btn" data-page="cifras">🎼<span>Cifras</span></button>
     </nav>
   </section>
 </main>
@@ -153,6 +154,6 @@
   </div>
 </div>
 
-<script type="module" src="./app.js?v=10.2"></script>
+<script type="module" src="./app.js?v=10.3"></script>
 </body>
 </html>
