@@ -7,10 +7,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>MVL - Ministério Vasos de Louvores</title>
-  <link rel="manifest" href="manifest.webmanifest?v=10.1">
-  <link rel="icon" sizes="192x192" href="mvl-icon-192-v4.png?v=10.1">
-  <link rel="apple-touch-icon" href="mvl-icon-192-v4.png?v=10.1">
-  <link rel="stylesheet" href="./styles.css?v=10.1.1">
+  <link rel="manifest" href="manifest.webmanifest?v=10.2">
+  <link rel="icon" sizes="192x192" href="mvl-icon-192-v4.png?v=10.2">
+  <link rel="apple-touch-icon" href="mvl-icon-192-v4.png?v=10.2">
+  <link rel="stylesheet" href="./styles.css?v=10.2">
   <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
   <script>
     window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -43,7 +43,7 @@
       <input id="senha" type="password" autocomplete="current-password" placeholder="Senha">
       <button id="entrar" class="primary">Entrar</button>
       <p id="login-status" class="hint"></p>
-      <div class="login-credit">Desenvolvido por <b>Robert Junior</b><br>© 2026 • Versão 10.1.1</div>
+      <div class="login-credit">Desenvolvido por <b>Robert Junior</b><br>© 2026 • Versão 10.2</div>
     </div>
   </section>
 
@@ -72,28 +72,21 @@
           <div id="next-scale-content"><p class="muted">Nenhuma escala encontrada.</p></div>
         </article>
 
-        <article id="prayer-card" class="prayer-card"><p class="muted">Carregando espaço de oração...</p></article>
-
-        <article id="birthday-card" class="birthday-card"><p class="muted">Carregando aniversariantes...</p></article>
-
         <button class="install install-trigger" style="display:none">
           ⬇ INSTALAR APLICATIVO
           <small>Adicione o MVL à sua tela inicial</small>
         </button>
 
         <div class="grid">
-          <button class="menu-card" data-page="escalas">👥<b>Escalas</b></button>
-          <button class="menu-card" data-page="repertorio">🎵<b>Repertório</b></button>
-          <button class="menu-card" data-page="musicas">🎶<b>Músicas</b></button>
-          <button class="menu-card" data-page="cifras">🎼<b>Cifras</b></button>
-          <button class="menu-card" data-page="agenda">🗓️<b>Agenda</b></button>
-          <button class="menu-card" data-page="calendario">📆<b>Calendário</b></button>
-          <button class="menu-card" data-page="avisos">📣<b>Avisos</b></button>
-          <button class="menu-card" data-page="comunicacao">💬<b>Comunicação</b></button>
-          <button class="menu-card" data-page="perfil">👤<b>Meu Perfil</b></button>
-          <button class="menu-card" data-page="membros">👥<b>Membros</b></button>
-          <button class="menu-card" data-page="multitracks">🎚️<b>Multitracks</b></button>
-          <button class="menu-card" data-page="notificacoes">🔔<b>Notificações</b></button>
+          <button class="menu-card" data-page="escalas"><span class="menu-icon">👥</span><b>Escalas</b></button>
+          <button class="menu-card" data-page="repertorio"><span class="menu-icon">🎵</span><b>Repertório</b></button>
+          <button class="menu-card" data-page="musicas"><span class="menu-icon">🎶</span><b>Músicas</b></button>
+          <button class="menu-card" data-page="agenda"><span class="menu-icon">🗓️</span><b>Agenda</b></button>
+          <button class="menu-card" data-page="avisos"><span class="menu-icon">📣</span><b>Avisos</b></button>
+          <button class="menu-card" data-page="membros"><span class="menu-icon">👥</span><b>Membros</b></button>
+          <button class="menu-card" data-page="arquivos"><span class="menu-icon">📁</span><b>Arquivos</b></button>
+          <button class="menu-card" data-page="multitracks"><span class="menu-icon">🎚️</span><b>Multitracks</b></button>
+          <button class="menu-card" data-page="links"><span class="menu-icon">🔗</span><b>Links Úteis</b></button>
         </div>
 
         <blockquote>
@@ -105,7 +98,7 @@
           <b>MVL – Ministério Vasos de Louvores</b>
           <span>Desenvolvido por Robert Junior</span>
           <span>© 2026</span>
-          <span>Versão 10.1.1</span>
+          <span>Versão 10.2</span>
         </footer>
       </section>
 
@@ -133,7 +126,7 @@
     <aside id="side-menu" class="side-menu hide" aria-label="Menu principal">
       <div class="side-menu-head"><div class="side-brand"><img src="./logo-mvl.jpg" alt="MVL"><div><b>MVL</b><small>Ministério Vasos de Louvores</small></div></div><button id="menu-close" class="menu-close">✕</button></div>
       <div class="side-menu-links">
-        <button data-page="inicio">⌂ <span>Início</span></button><button data-page="escalas">👥 <span>Escalas</span></button><button data-page="repertorio">🎵 <span>Repertório</span></button><button data-page="musicas">🎶 <span>Músicas</span></button><button data-page="cifras">🎼 <span>Cifras</span></button><button data-page="agenda">🗓️ <span>Agenda</span></button><button data-page="calendario">📆 <span>Calendário</span></button><button data-page="avisos">📣 <span>Avisos</span></button><button data-page="comunicacao">💬 <span>Comunicação</span></button><button data-page="membros">👥 <span>Membros</span></button><button data-page="multitracks">🎚️ <span>Multitracks</span></button><button data-page="notificacoes">🔔 <span>Notificações</span></button>
+        <button data-page="inicio">⌂ <span>Início</span></button><button data-page="escalas">👥 <span>Escalas</span></button><button data-page="repertorio">🎵 <span>Repertório</span></button><button data-page="musicas">🎶 <span>Músicas</span></button><button data-page="agenda">🗓️ <span>Agenda</span></button><button data-page="avisos">📣 <span>Avisos</span></button><button data-page="membros">👥 <span>Membros</span></button><button data-page="arquivos">📁 <span>Arquivos</span></button><button data-page="multitracks">🎚️ <span>Multitracks</span></button><button data-page="links">🔗 <span>Links Úteis</span></button><button data-page="comunicacao">💬 <span>Comunicação</span></button><button data-page="notificacoes">🔔 <span>Notificações</span></button>
         <div class="side-separator"></div><button data-page="perfil">👤 <span>Meu Perfil</span></button><button id="side-logout" class="side-logout">↪ <span>Sair</span></button>
       </div>
     </aside>
@@ -160,6 +153,6 @@
   </div>
 </div>
 
-<script type="module" src="./app.js?v=10.1.1"></script>
+<script type="module" src="./app.js?v=10.2"></script>
 </body>
 </html>

@@ -204,7 +204,7 @@ function updateHeaderAvatar(){const host=$('header-avatar');if(!host)return;cons
 async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id');if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
 async function openNotificationTarget(n){if(!n)return;if(n.lida!==true)await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()}).catch(()=>{});if(n.tipo==='chat_escala'&&n.refId)return openScaleChat(n.refId);if(n.tipo==='mensagem')return openSection('comunicacao');if(n.tipo==='agenda')return openSection('agenda');if(n.tipo==='confirmacao_escala'&&n.refId)return openScaleDetail(n.refId);return openSection('notificacoes');}
 function pushNav(page){if(navStack[navStack.length-1]!==page){navStack.push(page);history.pushState({mvl:true,page},'','#'+page);}}
-function goHome(fromPop=false){currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale();renderPrayerCard();renderBirthdayCard();if(!fromPop)pushNav('inicio');}
+function goHome(fromPop=false){currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale();if(!fromPop)pushNav('inicio');}
 window.addEventListener('popstate',()=>{if(chatUnsub){chatUnsub();chatUnsub=null;}if(navStack.length>1)navStack.pop();const target=navStack[navStack.length-1]||'inicio';if(target==='inicio')goHome(true);else openSection(target,true);});
 function setActiveNav(page){document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function showSectionHeader(title,subtitle){sectionTitle.textContent=title;sectionSubtitle.textContent=subtitle;}
@@ -416,8 +416,21 @@ async function setEncounterConfirmation(scale,encounterId,status){
 // Compatibilidade com botões/escala antiga
 async function setConfirmation(scale,status){const e=principalEncounter(scale);if(e)return setEncounterConfirmation(scale,e.id,status);}
 async function renderNextScale(){
-  if(!currentUser)return;await refreshCaches();const now=dateKey(new Date());const mine=scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid)).map(s=>({s,p:principalEncounter(s)})).filter(x=>x.p&&x.p.data>=now).sort((a,b)=>(a.p.data+(a.p.horario||'')).localeCompare(b.p.data+(b.p.horario||''))).slice(0,6);const el=$('next-scale-content');if(!mine.length){el.innerHTML='<p class="muted">Nenhuma escala futura encontrada.</p>';return;}
-  el.innerHTML='<div class="upcoming-scales">'+mine.map((x,i)=>`<button class="upcoming-scale scale-summary ${i===0?'next':''}" data-id="${x.s.id}"><b>${teamName(scaleTeam(x.s))} • 🎤 ${escapeHtml(scaleSingerName(x.s))}</b><span>${dateBR(x.p.data)}${x.s.evento?' — '+escapeHtml(x.s.evento):''}</span><small>Toque para abrir a escala ›</small></button>`).join('')+'</div>';el.querySelectorAll('.scale-summary').forEach(b=>b.onclick=()=>openScaleDetail(b.dataset.id));
+  if(!currentUser)return;
+  await refreshCaches();
+  const now=dateKey(new Date());
+  const next=scalesCache
+    .filter(s=>scaleParticipants(s).includes(currentUser.uid))
+    .map(s=>({s,p:principalEncounter(s)}))
+    .filter(x=>x.p&&x.p.data>=now)
+    .sort((a,b)=>(a.p.data+(a.p.horario||'')).localeCompare(b.p.data+(b.p.horario||'')))[0];
+  const el=$('next-scale-content');
+  if(!next){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada.</p>';return;}
+  const dt=new Date(next.p.data+'T12:00:00');
+  const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
+  const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
+  el.innerHTML=`<div class="next-cult-content"><div class="next-cult-icon">📅</div><div class="next-cult-info"><small>Próximo Culto</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(next.p.horario||'Horário a definir')}${next.s.evento?' • '+escapeHtml(next.s.evento):''}</span></div><button id="home-view-scale" class="primary next-cult-button">Ver escala</button></div>`;
+  $('home-view-scale').onclick=()=>openScaleDetail(next.s.id);
 }
 async function openScaleDetail(scaleId){await refreshCaches();const s=scalesCache.find(x=>x.id===scaleId);if(!s)return;currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,s.evento||'Escala');adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';listEl.innerHTML='';listEl.appendChild(await buildScaleCard(s));$('scale-detail-back').onclick=goHome;}
 const MVL_EMOJIS=['🙏','🙌','❤️','👏','🔥','🎵','🎤','🎸','🥁','🎹','😂','😊','👍','✅','🎶','💪','🤝','🎉'];
@@ -658,4 +671,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.1.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.2').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
