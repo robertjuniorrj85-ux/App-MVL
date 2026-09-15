@@ -7,10 +7,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>MVL - Ministério Vasos de Louvores</title>
-  <link rel="manifest" href="manifest.webmanifest?v=10.0">
-  <link rel="icon" sizes="192x192" href="mvl-icon-192-v4.png?v=10.0">
-  <link rel="apple-touch-icon" href="mvl-icon-192-v4.png?v=10.0">
-  <link rel="stylesheet" href="./styles.css?v=10.0">
+  <link rel="manifest" href="manifest.webmanifest?v=10.0.1">
+  <link rel="icon" sizes="192x192" href="mvl-icon-192-v4.png?v=10.0.1">
+  <link rel="apple-touch-icon" href="mvl-icon-192-v4.png?v=10.0.1">
+  <link rel="stylesheet" href="./styles.css?v=10.0.1">
   <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
   <script>
     window.OneSignalDeferred = window.OneSignalDeferred || [];
@@ -43,30 +43,30 @@
       <input id="senha" type="password" autocomplete="current-password" placeholder="Senha">
       <button id="entrar" class="primary">Entrar</button>
       <p id="login-status" class="hint"></p>
-      <div class="login-credit">Desenvolvido por <b>Robert Junior</b><br>© 2026 • Versão 10.0</div>
+      <div class="login-credit">Desenvolvido por <b>Robert Junior</b><br>© 2026 • Versão 10.0.1</div>
     </div>
   </section>
 
   <section id="app" class="screen hide">
-    <header>
-      <img src="./logo-mvl.jpg" alt="MVL">
+    <header class="app-header">
+      <img class="brand-logo" src="./logo-mvl.jpg" alt="MVL">
       <div class="brand">
         <b>MVL</b>
         <small>Ministério Vasos de Louvores</small>
         <span id="role-badge" class="role-badge">Integrante</span>
       </div>
-      <button id="sair" class="logout">Sair</button>
+      <button id="header-profile" class="header-profile" title="Meu Perfil"><span id="header-avatar" class="header-avatar">👤</span></button><button id="sair" class="logout">Sair</button>
     </header>
 
     <div class="content">
       <section id="home-view" class="view">
-        <div class="hero-row">
+        <div class="home-hero"><div class="hero-row">
           <div>
             <h2 id="saudacao">Olá!</h2>
             <p class="muted">Que bom te ver por aqui.</p>
           </div>
           <button id="notif-bell" class="icon-btn" title="Notificações">🔔<span id="notif-count" class="badge hide">0</span></button>
-        </div>
+        </div><div class="hero-kicker">MINISTÉRIO • COMUNHÃO • ADORAÇÃO</div></div>
 
         <article id="next-scale-card" class="highlight-card">
           <b>🎵 Minha próxima escala</b>
@@ -106,7 +106,7 @@
           <b>MVL – Ministério Vasos de Louvores</b>
           <span>Desenvolvido por Robert Junior</span>
           <span>© 2026</span>
-          <span>Versão 10.0</span>
+          <span>Versão 10.0.1</span>
         </footer>
       </section>
 
@@ -151,6 +151,6 @@
   </div>
 </div>
 
-<script type="module" src="./app.js?v=10.0"></script>
+<script type="module" src="./app.js?v=10.0.1"></script>
 </body>
 </html>
