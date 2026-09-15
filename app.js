@@ -1,4 +1,4 @@
-import { firebaseConfig } from './firebase-config.js?v=10.1';
+import { firebaseConfig } from './firebase-config.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
@@ -139,8 +139,17 @@ async function refreshCaches(){
 entrar.addEventListener('click',async()=>{
   if(!email.value.trim()||!senha.value){msg('Digite seu e-mail e sua senha.',true);return;}
   entrar.disabled=true;msg('Entrando...');
-  try{await signInWithEmailAndPassword(auth,email.value.trim(),senha.value);senha.value='';}
-  catch(e){const map={'auth/invalid-credential':'E-mail ou senha incorretos.','auth/invalid-email':'Digite um e-mail válido.','auth/too-many-requests':'Muitas tentativas. Aguarde um pouco.','auth/network-request-failed':'Sem conexão com a internet.'};msg(map[e.code]||'Não foi possível entrar.',true);}
+  try{
+    await setPersistence(auth,browserLocalPersistence);
+    const timeout=new Promise((_,reject)=>setTimeout(()=>reject(Object.assign(new Error('Tempo limite de autenticação.'),{code:'auth/timeout'})),15000));
+    await Promise.race([signInWithEmailAndPassword(auth,email.value.trim(),senha.value),timeout]);
+    senha.value='';
+  }
+  catch(e){
+    console.error('Login MVL',e);
+    const map={'auth/invalid-credential':'E-mail ou senha incorretos.','auth/invalid-email':'Digite um e-mail válido.','auth/too-many-requests':'Muitas tentativas. Aguarde um pouco.','auth/network-request-failed':'Sem conexão com a internet.','auth/timeout':'A autenticação demorou demais. Atualize o app e tente novamente.'};
+    msg(map[e.code]||`Não foi possível entrar${e.code?' ('+e.code+')':''}.`,true);
+  }
   finally{entrar.disabled=false;}
 });
 senha.addEventListener('keydown',e=>{if(e.key==='Enter')entrar.click();});
@@ -636,4 +645,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.1.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
