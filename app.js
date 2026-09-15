@@ -1,4 +1,4 @@
-import { firebaseConfig } from './firebase-config.js?v=10.0.1';
+import { firebaseConfig } from './firebase-config.js?v=10.1';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js';
 import {
   getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut,
@@ -149,6 +149,10 @@ $('voltar').addEventListener('click',()=>{if(chatUnsub){chatUnsub();chatUnsub=nu
 cancelEditBtn.addEventListener('click',resetEditor);
 $('notif-bell').addEventListener('click',()=>openSection('notificacoes'));
 $('header-profile')?.addEventListener('click',()=>openSection('perfil'));
+$('brand-home')?.addEventListener('click',()=>goHome());
+const closeSideMenu=()=>{$('side-menu')?.classList.add('hide');$('menu-backdrop')?.classList.add('hide');};
+const openSideMenu=()=>{$('side-menu')?.classList.remove('hide');$('menu-backdrop')?.classList.remove('hide');};
+$('menu-toggle')?.addEventListener('click',openSideMenu);$('menu-close')?.addEventListener('click',closeSideMenu);$('menu-backdrop')?.addEventListener('click',closeSideMenu);$('nav-more')?.addEventListener('click',openSideMenu);$('side-logout')?.addEventListener('click',()=>{$('sair').click();});document.querySelectorAll('.side-menu-links [data-page]').forEach(b=>b.addEventListener('click',()=>{closeSideMenu();const p=b.dataset.page;p==='inicio'?goHome():openSection(p);}));
 
 document.querySelectorAll('.menu-card,.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const p=btn.dataset.page;if(p==='inicio')goHome();else openSection(p);}));
 
@@ -632,4 +636,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.0.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
