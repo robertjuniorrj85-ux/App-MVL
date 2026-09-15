@@ -153,15 +153,28 @@ entrar.addEventListener('click',async()=>{
   finally{entrar.disabled=false;}
 });
 senha.addEventListener('keydown',e=>{if(e.key==='Enter')entrar.click();});
-$('sair').addEventListener('click',async()=>{try{window.MVLOneSignal?.logout();}catch{}await signOut(auth);});
-$('voltar').addEventListener('click',()=>{if(chatUnsub){chatUnsub();chatUnsub=null;}goHome();});
+async function fazerLogout(){
+  try{window.MVLOneSignal?.logout();}catch{}
+  await signOut(auth);
+}
+
+$('sair')?.addEventListener('click', fazerLogout);
+$('side-logout')?.addEventListener('click', fazerLogout);
+
+$('voltar')?.addEventListener('click',()=>{
+  if(chatUnsub){
+    chatUnsub();
+    chatUnsub=null;
+  }
+  goHome();
+});
 cancelEditBtn.addEventListener('click',resetEditor);
 $('notif-bell').addEventListener('click',()=>openSection('notificacoes'));
 $('header-profile')?.addEventListener('click',()=>openSection('perfil'));
 $('brand-home')?.addEventListener('click',()=>goHome());
 const closeSideMenu=()=>{$('side-menu')?.classList.add('hide');$('menu-backdrop')?.classList.add('hide');};
 const openSideMenu=()=>{$('side-menu')?.classList.remove('hide');$('menu-backdrop')?.classList.remove('hide');};
-$('menu-toggle')?.addEventListener('click',openSideMenu);$('menu-close')?.addEventListener('click',closeSideMenu);$('menu-backdrop')?.addEventListener('click',closeSideMenu);$('nav-more')?.addEventListener('click',openSideMenu);$('side-logout')?.addEventListener('click',()=>{$('sair').click();});document.querySelectorAll('.side-menu-links [data-page]').forEach(b=>b.addEventListener('click',()=>{closeSideMenu();const p=b.dataset.page;p==='inicio'?goHome():openSection(p);}));
+$('menu-toggle')?.addEventListener('click',openSideMenu);$('menu-close')?.addEventListener('click',closeSideMenu);$('menu-backdrop')?.addEventListener('click',closeSideMenu);$('nav-more')?.addEventListener('click',openSideMenu);document.querySelectorAll('.side-menu-links [data-page]').forEach(b=>b.addEventListener('click',()=>{closeSideMenu();const p=b.dataset.page;p==='inicio'?goHome():openSection(p);}));
 
 document.querySelectorAll('.menu-card,.nav-btn').forEach(btn=>btn.addEventListener('click',()=>{const p=btn.dataset.page;if(p==='inicio')goHome();else openSection(p);}));
 
