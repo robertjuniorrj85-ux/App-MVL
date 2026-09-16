@@ -247,3 +247,5 @@ nav{grid-template-columns:repeat(4,1fr)}
 .next-event-mini em{font-size:11px;color:#aaa;font-style:normal;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:620px){.next-cult-two{grid-template-columns:34px 1fr}.next-events-grid{grid-column:2;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.next-cult-two .next-cult-button{grid-column:2;margin-top:2px}.next-event-mini{padding:9px 8px}.next-event-mini strong{font-size:12px}.next-event-mini em{font-size:10px}}
 @media(max-width:360px){.next-events-grid{grid-template-columns:1fr}.next-event-mini:nth-child(2){display:none}}
+
+/* V10.3.3 - Home e Escalas ordenadas por todos os encontros, sem filtro de evento principal */

@@ -347,6 +347,9 @@ function scaleEncounters(s={}){
 }
 function scaleParticipants(s={}){return [...new Set(scaleEncounters(s).flatMap(e=>e.integranteIds||[]))];}
 function principalEncounter(s={}){const es=scaleEncounters(s);return es.find(e=>e.principal)||es.slice().sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).at(-1)||null;}
+function encounterDateTime(e={}){return (e.data||'')+'T'+(e.horario||'23:59');}
+function nextEncounterOfScale(s={},today=dateKey(new Date())){return scaleEncounters(s).filter(e=>e.data&&e.data>=today).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)))[0]||null;}
+function latestEncounterOfScale(s={}){return scaleEncounters(s).filter(e=>e.data).sort((a,b)=>encounterDateTime(b).localeCompare(encounterDateTime(a)))[0]||null;}
 function scaleSingerName(s={}){return s.cantorNome||userName(s.cantorId)||'Cantor não informado';}
 function scrollToAdminForm(){setTimeout(()=>adminPanel?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
 function addAlertRow(host,data={}){
@@ -356,7 +359,7 @@ function addAlertRow(host,data={}){
 }
 function addEncounterRow(data={}){
   const host=$('encounter-list');if(!host)return;const id=data.id||uidKey();const box=document.createElement('div');box.className='encounter-editor';box.dataset.id=id;
-  box.innerHTML=`<div class="encounter-head"><b>📅 Encontro</b><button type="button" class="danger remove-encounter">Remover encontro</button></div><input class="enc-name" placeholder="Nome: Ensaio Vocal, Ensaio Geral, Culto..." value="${escapeAttr(data.nome||'')}"><div class="form-grid two"><input class="enc-date" type="date" value="${escapeAttr(data.data||'')}"><input class="enc-time" type="time" value="${escapeAttr(data.horario||'')}"></div><label class="checkbox-row"><input class="enc-principal" type="radio" name="enc-principal" ${data.principal?'checked':''}><span><b>Evento principal</b><br><small class="muted">Esta data aparece em “Minhas próximas escalas”.</small></span></label><div><small class="muted">Participantes deste encontro</small><div class="multi-list enc-members">${sortedUsersForTeam($('scale-team')?.value||'mvl').map(u=>memberOptionHtml(u,data.integranteIds||[])).join('')}</div></div><div class="subpanel"><div class="subpanel-head"><b>🔔 Alertas personalizados</b><button type="button" class="secondary small-btn add-alert">+ Adicionar alerta</button></div><small class="muted">Escolha qualquer data e hora antes deste encontro. Você pode adicionar vários alertas.</small><div class="alert-list"></div></div>`;
+  box.innerHTML=`<div class="encounter-head"><b>📅 Encontro</b><button type="button" class="danger remove-encounter">Remover encontro</button></div><input class="enc-name" placeholder="Nome: Ensaio Vocal, Ensaio Geral, Culto..." value="${escapeAttr(data.nome||'')}"><div class="form-grid two"><input class="enc-date" type="date" value="${escapeAttr(data.data||'')}"><input class="enc-time" type="time" value="${escapeAttr(data.horario||'')}"></div><label class="checkbox-row"><input class="enc-principal" type="radio" name="enc-principal" ${data.principal?'checked':''}><span><b>Evento principal</b><br><small class="muted">Marca este encontro como referência principal da escala. Não interfere na ordem cronológica da Home.</small></span></label><div><small class="muted">Participantes deste encontro</small><div class="multi-list enc-members">${sortedUsersForTeam($('scale-team')?.value||'mvl').map(u=>memberOptionHtml(u,data.integranteIds||[])).join('')}</div></div><div class="subpanel"><div class="subpanel-head"><b>🔔 Alertas personalizados</b><button type="button" class="secondary small-btn add-alert">+ Adicionar alerta</button></div><small class="muted">Escolha qualquer data e hora antes deste encontro. Você pode adicionar vários alertas.</small><div class="alert-list"></div></div>`;
   box.querySelector('.remove-encounter').onclick=()=>{if(document.querySelectorAll('.encounter-editor').length===1){alert('A escala precisa ter pelo menos um encontro.');return;}box.remove();};
   box.querySelector('.add-alert').onclick=()=>addAlertRow(box.querySelector('.alert-list'));
   (data.alertas||[]).forEach(a=>addAlertRow(box.querySelector('.alert-list'),a));host.appendChild(box);
@@ -381,11 +384,11 @@ async function renderScales(editItem=null){
   addSearchBox('Pesquisar cantor, escala, encontro ou data...',filterCards);
   const hoje=dateKey(new Date());
   const visible=(canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid))).sort((a,b)=>{
-    const pa=principalEncounter(a),pb=principalEncounter(b);
-    const ka=(pa?.data||'')+'T'+(pa?.horario||'23:59'),kb=(pb?.data||'')+'T'+(pb?.horario||'23:59');
-    const aFutura=(pa?.data||'')>=hoje,bFutura=(pb?.data||'')>=hoje;
-    if(aFutura!==bFutura)return aFutura?-1:1;
-    return aFutura?ka.localeCompare(kb):kb.localeCompare(ka);
+    const na=nextEncounterOfScale(a,hoje),nb=nextEncounterOfScale(b,hoje);
+    if(!!na!==!!nb)return na?-1:1;
+    if(na&&nb)return encounterDateTime(na).localeCompare(encounterDateTime(nb));
+    const la=latestEncounterOfScale(a),lb=latestEncounterOfScale(b);
+    return encounterDateTime(lb||{}).localeCompare(encounterDateTime(la||{}));
   });
   listEl.innerHTML='';if(!visible.length){listEl.innerHTML=`<div class="empty">${canManage('escalas')?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}for(const s of visible)listEl.appendChild(await buildScaleCard(s));
 }
@@ -426,21 +429,22 @@ async function renderNextScale(){
   if(!currentUser)return;
   await refreshCaches();
   const now=dateKey(new Date());
-  // A Home mostra os próximos cultos/eventos do ministério, independentemente
-  // de o usuário estar escalado neles. A página Escalas continua respeitando permissões.
+  // A Home considera TODOS os encontros futuros, sejam ou não marcados como principal.
+  // O critério é somente data/hora: os dois eventos cronologicamente mais próximos.
   const proximas=scalesCache
-    .map(s=>({s,p:principalEncounter(s)}))
-    .filter(x=>x.p&&x.p.data>=now)
-    .sort((a,b)=>((a.p.data||'')+'T'+(a.p.horario||'23:59')).localeCompare((b.p.data||'')+'T'+(b.p.horario||'23:59')))
+    .flatMap(s=>scaleEncounters(s).map(e=>({s,e})))
+    .filter(x=>x.e&&x.e.data&&x.e.data>=now)
+    .sort((a,b)=>encounterDateTime(a.e).localeCompare(encounterDateTime(b.e)))
     .slice(0,2);
   const el=$('next-scale-content');
   if(!el)return;
-  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada.</p>';return;}
-  const cards=proximas.map(({s,p},i)=>{
-    const dt=new Date(p.data+'T12:00:00');
+  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhum evento futuro encontrado.</p>';return;}
+  const cards=proximas.map(({s,e},i)=>{
+    const dt=new Date(e.data+'T12:00:00');
     const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');
     const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
-    return `<div class="next-event-mini"><small>${i===0?'Próximo':'Seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(p.horario||'Horário a definir')}</span>${s.evento?`<em>${escapeHtml(s.evento)}</em>`:''}</div>`;
+    const nome=e.nome||s.evento||'Culto / Evento';
+    return `<div class="next-event-mini"><small>${i===0?'Próximo':'Seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(nome)}</em></div>`;
   }).join('');
   el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escalas</button></div>`;
   $('home-view-scale').onclick=()=>openSection('escalas');
