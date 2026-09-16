@@ -379,7 +379,14 @@ async function renderScales(editItem=null){
     const es=scaleEncounters(d);if(es.length)es.forEach(addEncounterRow);else addEncounterRow({nome:'Culto / Evento',principal:true});saveBtn.onclick=saveScale;if(editItem)scrollToAdminForm();
   }
   addSearchBox('Pesquisar cantor, escala, encontro ou data...',filterCards);
-  const visible=(canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid))).sort((a,b)=>{const pa=principalEncounter(a),pb=principalEncounter(b);return ((pb?.data||'')+(pb?.horario||'')).localeCompare((pa?.data||'')+(pa?.horario||''));});
+  const hoje=dateKey(new Date());
+  const visible=(canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid))).sort((a,b)=>{
+    const pa=principalEncounter(a),pb=principalEncounter(b);
+    const ka=(pa?.data||'')+'T'+(pa?.horario||'23:59'),kb=(pb?.data||'')+'T'+(pb?.horario||'23:59');
+    const aFutura=(pa?.data||'')>=hoje,bFutura=(pb?.data||'')>=hoje;
+    if(aFutura!==bFutura)return aFutura?-1:1;
+    return aFutura?ka.localeCompare(kb):kb.localeCompare(ka);
+  });
   listEl.innerHTML='';if(!visible.length){listEl.innerHTML=`<div class="empty">${canManage('escalas')?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}for(const s of visible)listEl.appendChild(await buildScaleCard(s));
 }
 async function saveScale(){
@@ -419,17 +426,23 @@ async function renderNextScale(){
   if(!currentUser)return;
   await refreshCaches();
   const now=dateKey(new Date());
-  const next=scalesCache
-    .filter(s=>scaleParticipants(s).includes(currentUser.uid))
+  // A Home mostra os próximos cultos/eventos do ministério, independentemente
+  // de o usuário estar escalado neles. A página Escalas continua respeitando permissões.
+  const proximas=scalesCache
     .map(s=>({s,p:principalEncounter(s)}))
     .filter(x=>x.p&&x.p.data>=now)
-    .sort((a,b)=>(a.p.data+(a.p.horario||'')).localeCompare(b.p.data+(b.p.horario||'')))[0];
+    .sort((a,b)=>((a.p.data||'')+'T'+(a.p.horario||'23:59')).localeCompare((b.p.data||'')+'T'+(b.p.horario||'23:59')))
+    .slice(0,2);
   const el=$('next-scale-content');
-  if(!next){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada.</p>';return;}
-  const dt=new Date(next.p.data+'T12:00:00');
-  const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
-  const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
-  el.innerHTML=`<div class="next-cult-content"><div class="next-cult-icon">📅</div><div class="next-cult-info"><small>Próximo Culto</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(next.p.horario||'Horário a definir')}${next.s.evento?' • '+escapeHtml(next.s.evento):''}</span></div><button id="home-view-scale" class="primary next-cult-button">Ver escala</button></div>`;
+  if(!el)return;
+  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada.</p>';return;}
+  const cards=proximas.map(({s,p},i)=>{
+    const dt=new Date(p.data+'T12:00:00');
+    const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');
+    const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
+    return `<div class="next-event-mini"><small>${i===0?'Próximo':'Seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(p.horario||'Horário a definir')}</span>${s.evento?`<em>${escapeHtml(s.evento)}</em>`:''}</div>`;
+  }).join('');
+  el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escalas</button></div>`;
   $('home-view-scale').onclick=()=>openSection('escalas');
 }
 async function openScaleDetail(scaleId){await refreshCaches();const s=scalesCache.find(x=>x.id===scaleId);if(!s)return;currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,s.evento||'Escala');adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';listEl.innerHTML='';listEl.appendChild(await buildScaleCard(s));$('scale-detail-back').onclick=goHome;}
