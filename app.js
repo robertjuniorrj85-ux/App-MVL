@@ -196,29 +196,41 @@ onAuthStateChanged(auth,async user=>{
 });
 
 let mvlOneSignalSubscriptionListener=false;
-async function syncOneSignalSubscription(){
+let mvlOneSignalSyncTimer=null;
+async function syncOneSignalSubscription(tentativa=0){
   try{
     const os=window.MVLOneSignal;
     if(!os||!currentUser)return false;
     await os.login(currentUser.uid);
     await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});
-    const subscriptionId=os.User?.PushSubscription?.id||'';
-    if(!subscriptionId)return false;
-    const result=await chamarBackendV10('push_subscription_sync',{subscriptionId});
-    return !!result.ok;
-  }catch(e){console.warn('OneSignal subscription sync',e);return false;}
+    const subscriptionId=String(os.User?.PushSubscription?.id||'').trim();
+    if(subscriptionId){
+      await chamarBackendV10('push_subscription_sync',{subscriptionId});
+      return true;
+    }
+    if(tentativa<10){
+      clearTimeout(mvlOneSignalSyncTimer);
+      mvlOneSignalSyncTimer=setTimeout(()=>syncOneSignalSubscription(tentativa+1).catch(()=>{}),1500);
+    }
+    return false;
+  }catch(e){
+    console.warn('OneSignal subscription sync',e);
+    if(tentativa<5){
+      clearTimeout(mvlOneSignalSyncTimer);
+      mvlOneSignalSyncTimer=setTimeout(()=>syncOneSignalSubscription(tentativa+1).catch(()=>{}),2000);
+    }
+    return false;
+  }
 }
 function identifyOneSignal(){
   const run=async()=>{
     try{
       const os=window.MVLOneSignal;
       if(!os||!currentUser)return;
-      await os.login(currentUser.uid);
-      await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});
       await syncOneSignalSubscription();
       if(!mvlOneSignalSubscriptionListener&&os.User?.PushSubscription?.addEventListener){
+        os.User.PushSubscription.addEventListener('change',()=>syncOneSignalSubscription().catch(()=>{}));
         mvlOneSignalSubscriptionListener=true;
-        os.User.PushSubscription.addEventListener('change',()=>syncOneSignalSubscription());
       }
     }catch(e){console.warn('OneSignal user',e);}
   };
@@ -453,25 +465,34 @@ async function setConfirmation(scale,status){const e=principalEncounter(scale);i
 async function renderNextScale(){
   if(!currentUser)return;
   await refreshCaches();
-  const now=dateKey(new Date());
-  // A Home considera TODOS os encontros futuros, sejam ou não marcados como principal.
-  // O critério é somente data/hora: os dois eventos cronologicamente mais próximos.
-  const proximas=scalesCache
-    .flatMap(s=>scaleEncounters(s).map(e=>({s,e})))
-    .filter(x=>x.e&&x.e.data&&x.e.data>=now)
-    .sort((a,b)=>encounterDateTime(a.e).localeCompare(encounterDateTime(b.e)))
-    .slice(0,2);
+  const agora=new Date();
+  const elegiveis=[];
+  for(const s of scalesCache){
+    const encontros=scaleEncounters(s);
+    const temParticipacaoPorEncontro=encontros.some(e=>Array.isArray(e.integranteIds)||Array.isArray(e.membros)||Array.isArray(e.participantes));
+    const meus=encontros.filter(e=>{
+      if(!e?.data)return false;
+      const dt=new Date(`${e.data}T${e.horario||'23:59'}:00`);
+      if(dt<agora)return false;
+      if(isAdmin)return true;
+      const ids=Array.isArray(e.integranteIds)?e.integranteIds:Array.isArray(e.membros)?e.membros:Array.isArray(e.participantes)?e.participantes:[];
+      if(temParticipacaoPorEncontro)return ids.includes(currentUser.uid);
+      return scaleParticipants(s).includes(currentUser.uid);
+    }).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)));
+    if(meus.length)elegiveis.push({s,e:meus[0]});
+  }
+  const proximas=elegiveis.sort((a,b)=>encounterDateTime(a.e).localeCompare(encounterDateTime(b.e))).slice(0,2);
   const el=$('next-scale-content');
   if(!el)return;
-  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhum evento futuro encontrado.</p>';return;}
+  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada para você.</p>';return;}
   const cards=proximas.map(({s,e},i)=>{
     const dt=new Date(e.data+'T12:00:00');
     const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');
     const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
     const nome=e.nome||s.evento||'Culto / Evento';
-    return `<div class="next-event-mini"><small>${i===0?'Próximo':'Seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(nome)}</em></div>`;
+    return `<div class="next-event-mini"><small>${i===0?'Próxima escala':'Escala seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(nome)}</em></div>`;
   }).join('');
-  el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escalas</button></div>`;
+  el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escala(s)</button></div>`;
   $('home-view-scale').onclick=()=>openSection('escalas');
 }
 async function openScaleDetail(scaleId){await refreshCaches();const s=scalesCache.find(x=>x.id===scaleId);if(!s)return;currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,s.evento||'Escala');adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';listEl.innerHTML='';listEl.appendChild(await buildScaleCard(s));$('scale-detail-back').onclick=goHome;}
@@ -515,7 +536,19 @@ function bindNotifications(){
 }
 function maybeBrowserNotify(n){if(!('Notification'in window)||Notification.permission!=='granted')return;try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}}
 async function requestNotifications(){
-  try{const os=window.MVLOneSignal;if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}os.login(currentUser.uid);await os.Notifications.requestPermission();await os.User.PushSubscription.optIn();await syncOneSignalSubscription();const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn;if(ok)alert('Notificações do dispositivo ativadas.');else alert('A permissão não foi concedida. Verifique as permissões do navegador.');}catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
+  try{
+    const os=window.MVLOneSignal;
+    if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}
+    if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}
+    await os.login(currentUser.uid);
+    await os.Notifications.requestPermission();
+    await os.User.PushSubscription.optIn();
+    const synced=await syncOneSignalSubscription();
+    const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn;
+    if(ok&&synced)alert('Notificações do dispositivo ativadas.');
+    else if(ok)alert('Notificações ativadas. O dispositivo será sincronizado automaticamente.');
+    else alert('A permissão não foi concedida. Verifique as permissões do navegador.');
+  }catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
 }
 async function renderNotifications(){
   showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">A V9.2 já identifica cada usuário no OneSignal. O envio automático de push externo depende do emissor seguro, sem expor chave no GitHub.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
@@ -713,4 +746,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.6').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.7').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
