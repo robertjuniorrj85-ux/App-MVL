@@ -195,45 +195,9 @@ onAuthStateChanged(auth,async user=>{
   if(currentUserData.mustChangePassword===true)showPasswordModal();
 });
 
-let mvlOneSignalSubscriptionListener=false;
-let mvlOneSignalSyncTimer=null;
-async function syncOneSignalSubscription(tentativa=0){
-  try{
-    const os=window.MVLOneSignal;
-    if(!os||!currentUser)return false;
-    await os.login(currentUser.uid);
-    await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});
-    const subscriptionId=String(os.User?.PushSubscription?.id||'').trim();
-    if(subscriptionId){
-      await chamarBackendV10('push_subscription_sync',{subscriptionId});
-      return true;
-    }
-    if(tentativa<10){
-      clearTimeout(mvlOneSignalSyncTimer);
-      mvlOneSignalSyncTimer=setTimeout(()=>syncOneSignalSubscription(tentativa+1).catch(()=>{}),1500);
-    }
-    return false;
-  }catch(e){
-    console.warn('OneSignal subscription sync',e);
-    if(tentativa<5){
-      clearTimeout(mvlOneSignalSyncTimer);
-      mvlOneSignalSyncTimer=setTimeout(()=>syncOneSignalSubscription(tentativa+1).catch(()=>{}),2000);
-    }
-    return false;
-  }
-}
+async function syncOneSignalSubscription(){try{const os=window.MVLOneSignal;if(!os||!currentUser)return false;await os.login(currentUser.uid);await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});const sub=os.User?.PushSubscription;const subscriptionId=sub?.id;if(!subscriptionId)return false;const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'push_subscription_sync',subscriptionId})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('OneSignal subscription sync',e);return false;}}
 function identifyOneSignal(){
-  const run=async()=>{
-    try{
-      const os=window.MVLOneSignal;
-      if(!os||!currentUser)return;
-      await syncOneSignalSubscription();
-      if(!mvlOneSignalSubscriptionListener&&os.User?.PushSubscription?.addEventListener){
-        os.User.PushSubscription.addEventListener('change',()=>syncOneSignalSubscription().catch(()=>{}));
-        mvlOneSignalSubscriptionListener=true;
-      }
-    }catch(e){console.warn('OneSignal user',e);}
-  };
+  const run=async()=>{try{const os=window.MVLOneSignal;if(!os||!currentUser)return;await os.login(currentUser.uid);await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});await syncOneSignalSubscription();const sub=os.User?.PushSubscription;if(sub?.addEventListener&&!sub.__mvlBound){sub.__mvlBound=true;sub.addEventListener('change',()=>syncOneSignalSubscription());}}catch(e){console.warn('OneSignal user',e);}};
   if(window.MVLOneSignal)run();else window.addEventListener('mvl-onesignal-ready',run,{once:true});
 }
 function updateRoleUI(){roleBadge.textContent=isPrincipalAdmin?'Administrador principal':isLimitedAdmin()?'Administrador':'Integrante';roleBadge.classList.toggle('admin',isAdmin);}
@@ -385,9 +349,11 @@ function scaleEncounters(s={}){
 function scaleParticipants(s={}){return [...new Set(scaleEncounters(s).flatMap(e=>e.integranteIds||[]))];}
 function principalEncounter(s={}){const es=scaleEncounters(s);return es.find(e=>e.principal)||es.slice().sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).at(-1)||null;}
 function encounterDateTime(e={}){return (e.data||'')+'T'+(e.horario||'23:59');}
-function encounterIsPast(e={},now=new Date()){if(!e?.data)return false;const dt=new Date(`${e.data}T${e.horario||'23:59'}:00`);return !Number.isNaN(dt.getTime())&&dt.getTime()<now.getTime();}
-function scaleIsCompleted(s={},now=new Date()){const es=scaleEncounters(s).filter(e=>e.data);return es.length>0&&es.every(e=>encounterIsPast(e,now));}
-function nextEncounterOfScale(s={},today=dateKey(new Date())){const now=new Date();return scaleEncounters(s).filter(e=>e.data&&e.data>=today&&!encounterIsPast(e,now)).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)))[0]||null;}
+function encounterEndMs(e={}){if(!e.data)return Infinity;const d=new Date(`${e.data}T${e.horario||'23:59'}:59`);const ms=d.getTime();return Number.isFinite(ms)?ms:Infinity;}
+function encounterFinished(e={},now=new Date()){return encounterEndMs(e)<now.getTime();}
+function scaleFinished(s={},now=new Date()){const es=scaleEncounters(s).filter(e=>e.data);return es.length>0&&es.every(e=>encounterFinished(e,now));}
+function nextActiveEncounter(s={},now=new Date(),onlyUser=false){return scaleEncounters(s).filter(e=>e.data&&!encounterFinished(e,now)&&(!onlyUser||canManage('escalas')||(e.integranteIds||[]).includes(currentUser?.uid))).sort((a,b)=>encounterEndMs(a)-encounterEndMs(b))[0]||null;}
+function nextEncounterOfScale(s={},today=dateKey(new Date())){return nextActiveEncounter(s,new Date(),false);}
 function latestEncounterOfScale(s={}){return scaleEncounters(s).filter(e=>e.data).sort((a,b)=>encounterDateTime(b).localeCompare(encounterDateTime(a)))[0]||null;}
 function scaleSingerName(s={}){return s.cantorNome||userName(s.cantorId)||'Cantor não informado';}
 function scrollToAdminForm(){setTimeout(()=>adminPanel?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
@@ -421,23 +387,14 @@ async function renderScales(editItem=null){
     const es=scaleEncounters(d);if(es.length)es.forEach(addEncounterRow);else addEncounterRow({nome:'Culto / Evento',principal:true});saveBtn.onclick=saveScale;if(editItem)scrollToAdminForm();
   }
   addSearchBox('Pesquisar cantor, escala, encontro ou data...',filterCards);
-  const hoje=dateKey(new Date());
-  const visible=(canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid))).sort((a,b)=>{
-    const na=nextEncounterOfScale(a,hoje),nb=nextEncounterOfScale(b,hoje);
-    if(!!na!==!!nb)return na?-1:1;
-    if(na&&nb)return encounterDateTime(na).localeCompare(encounterDateTime(nb));
-    const la=latestEncounterOfScale(a),lb=latestEncounterOfScale(b);
-    return encounterDateTime(lb||{}).localeCompare(encounterDateTime(la||{}));
-  });
-  const atuais=visible.filter(s=>!scaleIsCompleted(s));
-  const anteriores=visible.filter(s=>scaleIsCompleted(s));
+  const now=new Date();
+  const visible=(canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid)));
+  const atuais=visible.filter(s=>!scaleFinished(s,now)).sort((a,b)=>encounterEndMs(nextActiveEncounter(a,now,false))-encounterEndMs(nextActiveEncounter(b,now,false)));
+  const anteriores=visible.filter(s=>scaleFinished(s,now)).sort((a,b)=>encounterEndMs(latestEncounterOfScale(b))-encounterEndMs(latestEncounterOfScale(a)));
   listEl.innerHTML='';
   if(!atuais.length&&!anteriores.length){listEl.innerHTML=`<div class="empty">${canManage('escalas')?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}
   for(const s of atuais)listEl.appendChild(await buildScaleCard(s));
-  if(anteriores.length){
-    const titulo=document.createElement('div');titulo.className='subpanel';titulo.innerHTML='<div class="subpanel-head"><div><b>🕘 Escalas anteriores</b><small class="muted block">Escalas com todos os encontros concluídos.</small></div></div>';listEl.appendChild(titulo);
-    for(const s of anteriores)listEl.appendChild(await buildScaleCard(s,{completed:true}));
-  }
+  if(anteriores.length){const sep=document.createElement('div');sep.className='scale-history-heading';sep.innerHTML='<h2>🕘 Escalas anteriores</h2><p class="muted">Escalas em que todos os encontros já foram concluídos.</p>';listEl.appendChild(sep);for(const s of anteriores)listEl.appendChild(await buildScaleCard(s,{historical:true}));}
 }
 async function saveScale(){
   const evento=$('scale-event').value.trim(),equipeResponsavel=$('scale-team').value||'mvl',cantorId=$('scale-singer').value,repertorioId=$('scale-rep').value,encontros=collectEncounters();
@@ -458,14 +415,16 @@ async function syncScaleConfirmation(scaleId,encontros,status=''){try{const idTo
 async function getMyConfirmation(s){const c=await getDoc(doc(db,'escalas',s.id,'confirmacoes',currentUser.uid)).catch(()=>null);return c?.exists()?c.data():{};}
 function encounterStatusHtml(st){return st==='confirmado'?'<span class="status-pill ok">Confirmado</span>':st==='nao_posso'?'<span class="status-pill no">Não poderei</span>':'<span class="status-pill">Aguardando</span>';}
 async function buildScaleCard(s,opts={}){
-  const card=document.createElement('div');card.className='item-card scale-card';const manageScale=canManage('escalas'),rep=repById(s.repertorioId),allEs=scaleEncounters(s),es=manageScale?allEs:allEs.filter(e=>(e.integranteIds||[]).includes(currentUser.uid));const mine=!manageScale?await getMyConfirmation(s):{};const completed=opts.completed===true||scaleIsCompleted(s);let repHtml='';
+  const card=document.createElement('div');card.className='item-card scale-card'+(opts.historical?' scale-historical':'');const manageScale=canManage('escalas'),rep=repById(s.repertorioId),es=scaleEncounters(s);const mine=!manageScale?await getMyConfirmation(s):{};let repHtml='';
   if(rep){const itens=(rep.musicaItens||legacyRepItems(rep)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));repHtml=`<div class="scale-repertoire"><b>🎵 REPERTÓRIO</b>${itens.slice(0,8).map((it,i)=>{const song=songById(it.musicaId)||{},rr=resolvedSong(it.musicaId,s.cantorId||'',it);return `<button class="scale-song">${i+1}. ${escapeHtml(song.titulo||'Música')} <small>${escapeHtml(rr.tom||'')}</small></button>`;}).join('')}<button class="confirm-btn rep-btn">Abrir repertório completo</button></div>`;}
-  const encountersHtml=es.map(e=>{const st=mine.encontros?.[e.id]||(e.id==='principal'?mine.status:'');const names=(e.integranteIds||[]).map(userName);const involved=(e.integranteIds||[]).includes(currentUser.uid);const concluded=encounterIsPast(e);return `<div class="encounter-card ${e.principal?'principal':''}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${concluded?'<span class="status-pill ok">✓ Concluído</span>':(!manageScale&&involved?encounterStatusHtml(st):'')}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div>${manageScale?`<div class="item-meta"><b>Participantes:</b> ${escapeHtml(names.join(', ')||'Nenhum')}</div>`:''}${!manageScale&&involved&&!concluded?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;}).join('');
-  card.innerHTML=`<div class="scale-headline"><div><div class="scale-team-label ${scaleTeam(s)}">${teamName(scaleTeam(s))}</div><h3>🎤 ${escapeHtml(scaleSingerName(s))} ${completed?'<span class="status-pill ok">✓ Concluída</span>':''}</h3><div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${manageScale?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
+  const now=new Date();const endedScale=scaleFinished(s,now);
+  const encountersHtml=es.map(e=>{const ended=encounterFinished(e,now);const st=mine.encontros?.[e.id]||(e.id==='principal'?mine.status:'');const names=(e.integranteIds||[]).map(userName);const involved=(e.integranteIds||[]).includes(currentUser.uid);return `<div class="encounter-card ${e.principal?'principal':''} ${ended?'encounter-finished':''}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${ended?'<span class="status-pill ok">✓ Concluído</span>':(!manageScale&&involved?encounterStatusHtml(st):'')}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div>${manageScale?`<div class="item-meta"><b>Participantes:</b> ${escapeHtml(names.join(', ')||'Nenhum')}</div>`:''}${!ended&&!manageScale&&involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;}).join('');
+  card.innerHTML=`<div class="scale-headline"><div><div class="scale-team-label ${scaleTeam(s)}">${teamName(scaleTeam(s))}</div><h3>🎤 ${escapeHtml(scaleSingerName(s))} ${endedScale?'<span class="status-pill ok">✓ Concluída</span>':''}</h3><div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${manageScale?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
   card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelectorAll('.enc-yes').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'confirmado'));card.querySelectorAll('.enc-no').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'nao_posso'));card.querySelector('.edit-scale')?.addEventListener('click',()=>renderScales(s));card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
 }
 async function deleteScaleCascade(scaleId){const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();syncScaleDelete(scaleId).catch(()=>{});}
 async function setEncounterConfirmation(scale,encounterId,status){
+  const target=scaleEncounters(scale).find(e=>e.id===encounterId);if(!target||encounterFinished(target,new Date())){alert('Este encontro já foi concluído.');return;}
   let data={};try{const ref=doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid);const old=await getDoc(ref);data=old.exists()?old.data():{};const encontros={...(data.encontros||{}),[encounterId]:status};await setDoc(ref,{usuarioId:currentUser.uid,usuarioNome:currentUserData.nome||currentUser.email,encontros,atualizadoEm:serverTimestamp()},{merge:true});data.encontros=encontros;}catch(e){console.error(e);alert('Não foi possível registrar sua resposta.');return;}
   alert(status==='confirmado'?'Presença confirmada neste encontro.':'Resposta registrada neste encontro.');renderScales().catch(()=>{});syncScaleConfirmation(scale.id,data.encontros||{}).catch(()=>{});
   const enc=scaleEncounters(scale).find(e=>e.id===encounterId);const admins=adminIdsFor('escalas').filter(id=>id!==currentUser.uid);if(admins.length){const texto=`${currentUserData.nome||currentUser.email} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;createNotifications(admins,'Resposta de escala',texto,'confirmacao_escala',scale.id).catch(()=>{});enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins).catch(()=>{});}
@@ -475,33 +434,11 @@ async function setConfirmation(scale,status){const e=principalEncounter(scale);i
 async function renderNextScale(){
   if(!currentUser)return;
   await refreshCaches();
-  const agora=new Date();
-  const elegiveis=[];
-  for(const s of scalesCache){
-    const encontros=scaleEncounters(s);
-    const temParticipacaoPorEncontro=encontros.some(e=>Array.isArray(e.integranteIds)||Array.isArray(e.membros)||Array.isArray(e.participantes));
-    const meus=encontros.filter(e=>{
-      if(!e?.data)return false;
-      const dt=new Date(`${e.data}T${e.horario||'23:59'}:00`);
-      if(dt<agora)return false;
-      if(isAdmin)return true;
-      const ids=Array.isArray(e.integranteIds)?e.integranteIds:Array.isArray(e.membros)?e.membros:Array.isArray(e.participantes)?e.participantes:[];
-      if(temParticipacaoPorEncontro)return ids.includes(currentUser.uid);
-      return scaleParticipants(s).includes(currentUser.uid);
-    }).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)));
-    if(meus.length)elegiveis.push({s,e:meus[0]});
-  }
-  const proximas=elegiveis.sort((a,b)=>encounterDateTime(a.e).localeCompare(encounterDateTime(b.e))).slice(0,2);
-  const el=$('next-scale-content');
-  if(!el)return;
-  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada para você.</p>';return;}
-  const cards=proximas.map(({s,e},i)=>{
-    const dt=new Date(e.data+'T12:00:00');
-    const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');
-    const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
-    const nome=e.nome||s.evento||'Culto / Evento';
-    return `<div class="next-event-mini"><small>${i===0?'Próxima escala':'Escala seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(nome)}</em></div>`;
-  }).join('');
+  const now=new Date();
+  const candidates=scalesCache.map(s=>({s,e:nextActiveEncounter(s,now,true)})).filter(x=>x.e).sort((a,b)=>encounterEndMs(a.e)-encounterEndMs(b.e)).slice(0,2);
+  const el=$('next-scale-content');if(!el)return;
+  if(!candidates.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada para você.</p>';return;}
+  const cards=candidates.map(({s,e},i)=>{const dt=new Date(e.data+'T12:00:00');const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);return `<div class="next-event-mini"><small>${i===0?'Próxima escala':'Escala seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(s.evento||e.nome||'Escala')}</em></div>`;}).join('');
   el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escala(s)</button></div>`;
   $('home-view-scale').onclick=()=>openSection('escalas');
 }
@@ -546,19 +483,7 @@ function bindNotifications(){
 }
 function maybeBrowserNotify(n){if(!('Notification'in window)||Notification.permission!=='granted')return;try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}}
 async function requestNotifications(){
-  try{
-    const os=window.MVLOneSignal;
-    if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}
-    if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}
-    await os.login(currentUser.uid);
-    await os.Notifications.requestPermission();
-    await os.User.PushSubscription.optIn();
-    const synced=await syncOneSignalSubscription();
-    const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn;
-    if(ok&&synced)alert('Notificações do dispositivo ativadas.');
-    else if(ok)alert('Notificações ativadas. O dispositivo será sincronizado automaticamente.');
-    else alert('A permissão não foi concedida. Verifique as permissões do navegador.');
-  }catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
+  try{const os=window.MVLOneSignal;if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}os.login(currentUser.uid);await os.Notifications.requestPermission();await os.User.PushSubscription.optIn();await syncOneSignalSubscription();const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn;if(ok)alert('Notificações do dispositivo ativadas.');else alert('A permissão não foi concedida. Verifique as permissões do navegador.');}catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
 }
 async function renderNotifications(){
   showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">A V9.2 já identifica cada usuário no OneSignal. O envio automático de push externo depende do emissor seguro, sem expor chave no GitHub.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
@@ -756,4 +681,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.7').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.9').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
