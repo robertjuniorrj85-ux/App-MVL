@@ -104,21 +104,14 @@ async function acaoAdminUsuario(tipo,u,extra={}){
   return chamarBackendV10(tipo,{usuarioId:u.id,uid:u.id,targetUid:u.id,email:u.email||'',...extra});
 }
 async function enviarPushMVL(tipo,titulo,mensagem,destinatarios=[],url='https://robertjuniorrj85-ux.github.io/App-MVL/'){
-  const user=auth.currentUser;if(!user)return false;
-  const ids=[...new Set((destinatarios||[]).filter(Boolean))];if(!ids.length)return false;
-  let ultimoErro=null;
-  for(let tentativa=1;tentativa<=2;tentativa++){
-    try{
-      const idToken=await user.getIdToken(true);
-      const resposta=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo,titulo,mensagem,destinatarios:ids,url})});
-      const texto=await resposta.text();let resultado={};try{resultado=texto?JSON.parse(texto):{};}catch(_){resultado={ok:false,erro:'Resposta inválida do servidor.',resposta:texto};}
-      if(resposta.ok&&resultado.ok===true)return true;
-      ultimoErro=resultado;console.error(`Erro Push MVL (tentativa ${tentativa}):`,resultado);
-      if(resultado?.status>=400&&resultado?.status<500)break;
-    }catch(erro){ultimoErro=erro;console.error(`Falha ao enviar Push MVL (tentativa ${tentativa}):`,erro);}
-    if(tentativa===1)await new Promise(r=>setTimeout(r,700));
-  }
-  console.error('Push MVL não enviado:',ultimoErro);return false;
+  try{
+    const user=auth.currentUser;if(!user)return false;
+    const idToken=await user.getIdToken();
+    const resposta=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo,titulo,mensagem,destinatarios,url})});
+    const resultado=await resposta.json();
+    if(!resultado.ok){console.error('Erro Push MVL:',resultado);return false;}
+    return true;
+  }catch(erro){console.error('Falha ao enviar Push MVL:',erro);return false;}
 }
 
 function msg(text,error=false){loginStatus.textContent=text;loginStatus.className=error?'hint error':'hint';}
@@ -197,61 +190,40 @@ onAuthStateChanged(auth,async user=>{
   currentUserData=snap.data()||{};isPrincipalAdmin=currentUserData.role==='admin'&&currentUserData.adminPrincipal===true;isAdmin=isPrincipalAdmin||isLimitedAdmin();
   await setDoc(userRef,{email:user.email,ultimoAcesso:serverTimestamp()},{merge:true}).catch(()=>{});
   updateRoleUI();updateHeaderAvatar();saudacao.textContent='Olá, '+(currentUserData.nome||user.displayName||user.email.split('@')[0])+'!';
-  await refreshCaches();if(isPrincipalAdmin)await migrateLegacyAdminSchema();bindNotifications();await identifyOneSignal();if(isPrincipalAdmin)syncAdminPermissionsForPush().catch(()=>{});await renderNextScale();goHome();await handleDeepLink();
+  await refreshCaches();if(isPrincipalAdmin)await migrateLegacyAdminSchema();bindNotifications();identifyOneSignal();if(isPrincipalAdmin)syncAdminPermissionsForPush().catch(()=>{});await renderNextScale();goHome();await handleDeepLink();
   if(canManage('escalas')||canManage('membros'))syncAllScheduledData().catch(e=>console.warn('Sincronização agendada',e));
   if(currentUserData.mustChangePassword===true)showPasswordModal();
 });
 
-async function identifyOneSignal(){
-  if(!currentUser)return false;
-  const uid=String(currentUser.uid||'').trim();
-  if(!uid)return false;
+let mvlOneSignalSubscriptionListener=false;
+async function syncOneSignalSubscription(){
   try{
-    let os=window.MVLOneSignal;
-    if(!os){
-      os=await new Promise(resolve=>{
-        let finished=false;
-        const done=()=>{if(finished)return;finished=true;resolve(window.MVLOneSignal||null);};
-        window.addEventListener('mvl-onesignal-ready',done,{once:true});
-        const started=Date.now();
-        const timer=setInterval(()=>{
-          if(window.MVLOneSignal){clearInterval(timer);done();}
-          else if(Date.now()-started>12000){clearInterval(timer);done();}
-        },250);
-      });
-    }
-    if(!os)return false;
-
-    // O backend envia por include_aliases.external_id. Portanto cada aparelho
-    // precisa estar explicitamente associado ao UID do Firebase que está logado.
-    await os.login(uid);
-    await new Promise(r=>setTimeout(r,350));
-
-    let externalId=String(os.User?.externalId||'').trim();
-    if(externalId!==uid){
-      // Reforça a associação quando existe uma inscrição antiga/órfã no aparelho.
-      await os.login(uid);
-      await new Promise(r=>setTimeout(r,700));
-      externalId=String(os.User?.externalId||'').trim();
-    }
-
-    if(os.User?.addTags)await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',firebase_uid:uid});
-
-    // Se a permissão já foi concedida mas a inscrição ficou desativada, reativa-a.
-    if(typeof Notification!=='undefined'&&Notification.permission==='granted'&&os.User?.PushSubscription){
-      const ps=os.User.PushSubscription;
-      if(ps.optedIn===false&&typeof ps.optIn==='function'){
-        try{await ps.optIn();}catch(e){console.warn('OneSignal optIn',e);}
-      }
-    }
-
-    console.info('OneSignal MVL identificado',{uid,externalId:String(os.User?.externalId||'')});
-    return String(os.User?.externalId||'').trim()===uid;
-  }catch(e){console.warn('OneSignal user',e);return false;}
+    const os=window.MVLOneSignal;
+    if(!os||!currentUser)return false;
+    await os.login(currentUser.uid);
+    await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});
+    const subscriptionId=os.User?.PushSubscription?.id||'';
+    if(!subscriptionId)return false;
+    const result=await chamarBackendV10('push_subscription_sync',{subscriptionId});
+    return !!result.ok;
+  }catch(e){console.warn('OneSignal subscription sync',e);return false;}
 }
-// Revalida a associação após o app voltar do segundo plano ou ser reaberto.
-window.addEventListener('focus',()=>{if(auth.currentUser)identifyOneSignal().catch(()=>{});});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&auth.currentUser)identifyOneSignal().catch(()=>{});});
+function identifyOneSignal(){
+  const run=async()=>{
+    try{
+      const os=window.MVLOneSignal;
+      if(!os||!currentUser)return;
+      await os.login(currentUser.uid);
+      await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});
+      await syncOneSignalSubscription();
+      if(!mvlOneSignalSubscriptionListener&&os.User?.PushSubscription?.addEventListener){
+        mvlOneSignalSubscriptionListener=true;
+        os.User.PushSubscription.addEventListener('change',()=>syncOneSignalSubscription());
+      }
+    }catch(e){console.warn('OneSignal user',e);}
+  };
+  if(window.MVLOneSignal)run();else window.addEventListener('mvl-onesignal-ready',run,{once:true});
+}
 function updateRoleUI(){roleBadge.textContent=isPrincipalAdmin?'Administrador principal':isLimitedAdmin()?'Administrador':'Integrante';roleBadge.classList.toggle('admin',isAdmin);}
 function updateHeaderAvatar(){const host=$('header-avatar');if(!host)return;const url=fotoUrlUsuario(currentUserData||{});host.innerHTML=url?`<img src="${escapeAttr(url)}" alt="Perfil" referrerpolicy="no-referrer">`:memberIcon(currentUserData||{});}
 async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id');if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
@@ -401,9 +373,7 @@ function scaleEncounters(s={}){
 function scaleParticipants(s={}){return [...new Set(scaleEncounters(s).flatMap(e=>e.integranteIds||[]))];}
 function principalEncounter(s={}){const es=scaleEncounters(s);return es.find(e=>e.principal)||es.slice().sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).at(-1)||null;}
 function encounterDateTime(e={}){return (e.data||'')+'T'+(e.horario||'23:59');}
-function encounterIsConcluded(e={},now=new Date()){if(!e.data)return false;const limite=new Date(`${e.data}T${e.horario||'23:59'}:00`);return !Number.isNaN(limite.getTime())&&limite.getTime()<now.getTime();}
-function scaleIsConcluded(s={},now=new Date()){const es=scaleEncounters(s).filter(e=>e.data);return es.length>0&&es.every(e=>encounterIsConcluded(e,now));}
-function nextEncounterOfScale(s={},now=new Date()){return scaleEncounters(s).filter(e=>e.data&&!encounterIsConcluded(e,now)).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)))[0]||null;}
+function nextEncounterOfScale(s={},today=dateKey(new Date())){return scaleEncounters(s).filter(e=>e.data&&e.data>=today).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)))[0]||null;}
 function latestEncounterOfScale(s={}){return scaleEncounters(s).filter(e=>e.data).sort((a,b)=>encounterDateTime(b).localeCompare(encounterDateTime(a)))[0]||null;}
 function scaleSingerName(s={}){return s.cantorNome||userName(s.cantorId)||'Cantor não informado';}
 function scrollToAdminForm(){setTimeout(()=>adminPanel?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
@@ -429,23 +399,23 @@ function validateEncounters(es){
   if(!es.some(e=>e.principal))es[es.length-1].principal=true;return '';
 }
 async function renderScales(editItem=null){
-  showSectionHeader('Escalas','Escalas atuais e encontros ainda em andamento.');await refreshCaches();const allowed=canManage('escalas');adminPanel.classList.toggle('hide',!allowed);
+  showSectionHeader('Escalas','Uma escala, vários encontros: ensaio vocal, ensaio geral, culto e outros.');await refreshCaches();const allowed=canManage('escalas');adminPanel.classList.toggle('hide',!allowed);
   if(allowed){
     $('form-title').textContent=editItem?'Editar escala':'Nova escala';editingId=editItem?.id||null;cancelEditBtn.classList.toggle('hide',!editItem);saveBtn.textContent=editItem?'Atualizar':'Salvar';const d=editItem||{};
     dynamicForm.innerHTML=`<div class="form-grid"><input id="scale-event" placeholder="Culto / Evento" value="${escapeAttr(d.evento||'')}"><label class="field-label">Equipe responsável<select id="scale-team"><option value="mvl" ${scaleTeam(d)==='mvl'?'selected':''}>MVL</option><option value="nova_geracao" ${scaleTeam(d)==='nova_geracao'?'selected':''}>⚡ Nova Geração</option></select></label><select id="scale-singer"><option value="">Selecione o cantor da escala</option>${sortedUsersForTeam(scaleTeam(d)).map(u=>`<option value="${u.id}" ${d.cantorId===u.id?'selected':''}>${memberIcon(u)} ${escapeHtml(u.nome||u.email||u.id)} — ${memberTeams(u).map(t=>t==='nova_geracao'?'Nova Geração':'MVL').join(' + ')}</option>`).join('')}</select><select id="scale-rep"><option value="">Sem repertório vinculado</option>${repertoiresCache.map(r=>`<option value="${r.id}" ${d.repertorioId===r.id?'selected':''}>${escapeHtml(r.nome||'Repertório')}</option>`).join('')}</select><label class="checkbox-row"><input id="notify-scaled" type="checkbox" ${editItem?'':'checked'}><span><b>Notificar participantes ao salvar</b><br><small class="muted">Envia o aviso sem interferir no salvamento da escala.</small></span></label><div class="subpanel encounters-panel"><div class="subpanel-head"><div><b>📅 Encontros desta escala</b><small class="muted block">Cada encontro tem data, horário, participantes, confirmação e alertas próprios.</small></div><button id="add-encounter" type="button" class="secondary small-btn">+ Adicionar encontro</button></div><div id="encounter-list"></div></div></div>`;
     $('scale-team').onchange=refreshEncounterMemberLists;$('add-encounter').onclick=()=>addEncounterRow({principal:document.querySelectorAll('.encounter-editor').length===0});
     const es=scaleEncounters(d);if(es.length)es.forEach(addEncounterRow);else addEncounterRow({nome:'Culto / Evento',principal:true});saveBtn.onclick=saveScale;if(editItem)scrollToAdminForm();
   }
-  const historyBtn=document.createElement('button');historyBtn.type='button';historyBtn.className='secondary scale-history-btn';historyBtn.innerHTML='🗂️ Escalas anteriores';historyBtn.onclick=()=>renderPreviousScales();sectionSpecial.appendChild(historyBtn);
   addSearchBox('Pesquisar cantor, escala, encontro ou data...',filterCards);
-  const now=new Date();const base=canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid));
-  const visible=base.filter(s=>!scaleIsConcluded(s,now)).sort((a,b)=>{const na=nextEncounterOfScale(a,now),nb=nextEncounterOfScale(b,now);if(!!na!==!!nb)return na?-1:1;if(na&&nb)return encounterDateTime(na).localeCompare(encounterDateTime(nb));return (a.evento||'').localeCompare(b.evento||'');});
-  listEl.innerHTML='';if(!visible.length){listEl.innerHTML=`<div class="empty">${canManage('escalas')?'Nenhuma escala atual. Consulte Escalas anteriores para ver o histórico.':'Você não possui escala atual.'}</div>`;return;}for(const s of visible)listEl.appendChild(await buildScaleCard(s));
-}
-async function renderPreviousScales(){
-  showSectionHeader('Escalas anteriores','Histórico de escalas com todos os encontros concluídos.');await refreshCaches();adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="back-current-scales" class="back-inline">← Voltar para escalas atuais</button>';$('back-current-scales').onclick=()=>renderScales();addSearchBox('Pesquisar nas escalas anteriores...',filterCards);
-  const now=new Date(),base=canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid));const anteriores=base.filter(s=>scaleIsConcluded(s,now)).sort((a,b)=>encounterDateTime(latestEncounterOfScale(b)||{}).localeCompare(encounterDateTime(latestEncounterOfScale(a)||{})));
-  listEl.innerHTML='';if(!anteriores.length){listEl.innerHTML='<div class="empty">Nenhuma escala concluída até o momento.</div>';return;}for(const s of anteriores)listEl.appendChild(await buildScaleCard(s));
+  const hoje=dateKey(new Date());
+  const visible=(canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid))).sort((a,b)=>{
+    const na=nextEncounterOfScale(a,hoje),nb=nextEncounterOfScale(b,hoje);
+    if(!!na!==!!nb)return na?-1:1;
+    if(na&&nb)return encounterDateTime(na).localeCompare(encounterDateTime(nb));
+    const la=latestEncounterOfScale(a),lb=latestEncounterOfScale(b);
+    return encounterDateTime(lb||{}).localeCompare(encounterDateTime(la||{}));
+  });
+  listEl.innerHTML='';if(!visible.length){listEl.innerHTML=`<div class="empty">${canManage('escalas')?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}for(const s of visible)listEl.appendChild(await buildScaleCard(s));
 }
 async function saveScale(){
   const evento=$('scale-event').value.trim(),equipeResponsavel=$('scale-team').value||'mvl',cantorId=$('scale-singer').value,repertorioId=$('scale-rep').value,encontros=collectEncounters();
@@ -468,7 +438,7 @@ function encounterStatusHtml(st){return st==='confirmado'?'<span class="status-p
 async function buildScaleCard(s){
   const card=document.createElement('div');card.className='item-card scale-card';const manageScale=canManage('escalas'),rep=repById(s.repertorioId),es=scaleEncounters(s);const mine=!manageScale?await getMyConfirmation(s):{};let repHtml='';
   if(rep){const itens=(rep.musicaItens||legacyRepItems(rep)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));repHtml=`<div class="scale-repertoire"><b>🎵 REPERTÓRIO</b>${itens.slice(0,8).map((it,i)=>{const song=songById(it.musicaId)||{},rr=resolvedSong(it.musicaId,s.cantorId||'',it);return `<button class="scale-song">${i+1}. ${escapeHtml(song.titulo||'Música')} <small>${escapeHtml(rr.tom||'')}</small></button>`;}).join('')}<button class="confirm-btn rep-btn">Abrir repertório completo</button></div>`;}
-  const encountersHtml=es.map(e=>{const st=mine.encontros?.[e.id]||(e.id==='principal'?mine.status:'');const names=(e.integranteIds||[]).map(userName);const involved=(e.integranteIds||[]).includes(currentUser.uid),concluido=encounterIsConcluded(e);return `<div class="encounter-card ${e.principal?'principal':''} ${concluido?'concluded':''}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${concluido?'<span class="status-pill done">✓ Concluído</span>':(!manageScale&&involved?encounterStatusHtml(st):'')}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div>${manageScale?`<div class="item-meta"><b>Participantes:</b> ${escapeHtml(names.join(', ')||'Nenhum')}</div>`:''}${!concluido&&!manageScale&&involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;}).join('');
+  const encountersHtml=es.map(e=>{const st=mine.encontros?.[e.id]||(e.id==='principal'?mine.status:'');const names=(e.integranteIds||[]).map(userName);const involved=(e.integranteIds||[]).includes(currentUser.uid);return `<div class="encounter-card ${e.principal?'principal':''}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${!manageScale&&involved?encounterStatusHtml(st):''}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div>${manageScale?`<div class="item-meta"><b>Participantes:</b> ${escapeHtml(names.join(', ')||'Nenhum')}</div>`:''}${!manageScale&&involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;}).join('');
   card.innerHTML=`<div class="scale-headline"><div><div class="scale-team-label ${scaleTeam(s)}">${teamName(scaleTeam(s))}</div><h3>🎤 ${escapeHtml(scaleSingerName(s))}</h3><div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${manageScale?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
   card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelectorAll('.enc-yes').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'confirmado'));card.querySelectorAll('.enc-no').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'nao_posso'));card.querySelector('.edit-scale')?.addEventListener('click',()=>renderScales(s));card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
 }
@@ -481,11 +451,28 @@ async function setEncounterConfirmation(scale,encounterId,status){
 // Compatibilidade com botões/escala antiga
 async function setConfirmation(scale,status){const e=principalEncounter(scale);if(e)return setEncounterConfirmation(scale,e.id,status);}
 async function renderNextScale(){
-  if(!currentUser)return;await refreshCaches();const now=new Date();
-  const proximas=scalesCache.map(s=>({s,e:nextEncounterOfScale(s,now)})).filter(x=>x.e).sort((a,b)=>encounterDateTime(a.e).localeCompare(encounterDateTime(b.e))).slice(0,2);
-  const el=$('next-scale-content');if(!el)return;if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada.</p>';return;}
-  const cards=proximas.map(({s,e},i)=>{const dt=new Date(e.data+'T12:00:00');const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);const nome=e.nome||s.evento||'Culto / Evento';return `<div class="next-event-mini"><small>${i===0?'Próxima escala':'Escala seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(scaleSingerName(s))} • ${escapeHtml(nome)}</em></div>`;}).join('');
-  el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escalas</button></div>`;$('home-view-scale').onclick=()=>openSection('escalas');
+  if(!currentUser)return;
+  await refreshCaches();
+  const now=dateKey(new Date());
+  // A Home considera TODOS os encontros futuros, sejam ou não marcados como principal.
+  // O critério é somente data/hora: os dois eventos cronologicamente mais próximos.
+  const proximas=scalesCache
+    .flatMap(s=>scaleEncounters(s).map(e=>({s,e})))
+    .filter(x=>x.e&&x.e.data&&x.e.data>=now)
+    .sort((a,b)=>encounterDateTime(a.e).localeCompare(encounterDateTime(b.e)))
+    .slice(0,2);
+  const el=$('next-scale-content');
+  if(!el)return;
+  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhum evento futuro encontrado.</p>';return;}
+  const cards=proximas.map(({s,e},i)=>{
+    const dt=new Date(e.data+'T12:00:00');
+    const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');
+    const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
+    const nome=e.nome||s.evento||'Culto / Evento';
+    return `<div class="next-event-mini"><small>${i===0?'Próximo':'Seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(nome)}</em></div>`;
+  }).join('');
+  el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escalas</button></div>`;
+  $('home-view-scale').onclick=()=>openSection('escalas');
 }
 async function openScaleDetail(scaleId){await refreshCaches();const s=scalesCache.find(x=>x.id===scaleId);if(!s)return;currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,s.evento||'Escala');adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';listEl.innerHTML='';listEl.appendChild(await buildScaleCard(s));$('scale-detail-back').onclick=goHome;}
 const MVL_EMOJIS=['🙏','🙌','❤️','👏','🔥','🎵','🎤','🎸','🥁','🎹','😂','😊','👍','✅','🎶','💪','🤝','🎉'];
@@ -528,7 +515,7 @@ function bindNotifications(){
 }
 function maybeBrowserNotify(n){if(!('Notification'in window)||Notification.permission!=='granted')return;try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}}
 async function requestNotifications(){
-  try{const os=window.MVLOneSignal;if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}os.login(currentUser.uid);await os.Notifications.requestPermission();await os.User.PushSubscription.optIn();const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn;if(ok)alert('Notificações do dispositivo ativadas.');else alert('A permissão não foi concedida. Verifique as permissões do navegador.');}catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
+  try{const os=window.MVLOneSignal;if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}os.login(currentUser.uid);await os.Notifications.requestPermission();await os.User.PushSubscription.optIn();await syncOneSignalSubscription();const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn;if(ok)alert('Notificações do dispositivo ativadas.');else alert('A permissão não foi concedida. Verifique as permissões do navegador.');}catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
 }
 async function renderNotifications(){
   showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">A V9.2 já identifica cada usuário no OneSignal. O envio automático de push externo depende do emissor seguro, sem expor chave no GitHub.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
@@ -726,4 +713,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.5').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.6').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
