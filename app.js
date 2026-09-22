@@ -394,7 +394,17 @@ async function renderScales(editItem=null){
   listEl.innerHTML='';
   if(!atuais.length&&!anteriores.length){listEl.innerHTML=`<div class="empty">${canManage('escalas')?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}
   for(const s of atuais)listEl.appendChild(await buildScaleCard(s));
-  if(anteriores.length){const sep=document.createElement('div');sep.className='scale-history-heading';sep.innerHTML='<h2>🕘 Escalas anteriores</h2><p class="muted">Escalas em que todos os encontros já foram concluídos.</p>';listEl.appendChild(sep);for(const s of anteriores)listEl.appendChild(await buildScaleCard(s,{historical:true}));}
+  if(anteriores.length){
+    const historyWrap=document.createElement('div');
+    historyWrap.className='scale-history-wrap';
+    historyWrap.innerHTML=`<button type="button" class="secondary scale-history-toggle">🕘 Mostrar escalas anteriores</button><div class="scale-history-content hide"></div>`;
+    listEl.appendChild(historyWrap);
+    const historyContent=historyWrap.querySelector('.scale-history-content');
+    const toggle=historyWrap.querySelector('.scale-history-toggle');
+    const sep=document.createElement('div');sep.className='scale-history-heading';sep.innerHTML='<h2>🕘 Escalas anteriores</h2><p class="muted">Escalas em que todos os encontros já foram concluídos.</p>';historyContent.appendChild(sep);
+    for(const s of anteriores)historyContent.appendChild(await buildScaleCard(s,{historical:true}));
+    toggle.onclick=()=>{const hidden=historyContent.classList.toggle('hide');toggle.textContent=hidden?'🕘 Mostrar escalas anteriores':'Ocultar escalas anteriores';};
+  }
 }
 async function saveScale(){
   const evento=$('scale-event').value.trim(),equipeResponsavel=$('scale-team').value||'mvl',cantorId=$('scale-singer').value,repertorioId=$('scale-rep').value,encontros=collectEncounters();
@@ -681,4 +691,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.9').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.4.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
