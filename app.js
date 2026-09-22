@@ -197,15 +197,61 @@ onAuthStateChanged(auth,async user=>{
   currentUserData=snap.data()||{};isPrincipalAdmin=currentUserData.role==='admin'&&currentUserData.adminPrincipal===true;isAdmin=isPrincipalAdmin||isLimitedAdmin();
   await setDoc(userRef,{email:user.email,ultimoAcesso:serverTimestamp()},{merge:true}).catch(()=>{});
   updateRoleUI();updateHeaderAvatar();saudacao.textContent='Olá, '+(currentUserData.nome||user.displayName||user.email.split('@')[0])+'!';
-  await refreshCaches();if(isPrincipalAdmin)await migrateLegacyAdminSchema();bindNotifications();identifyOneSignal();if(isPrincipalAdmin)syncAdminPermissionsForPush().catch(()=>{});await renderNextScale();goHome();await handleDeepLink();
+  await refreshCaches();if(isPrincipalAdmin)await migrateLegacyAdminSchema();bindNotifications();await identifyOneSignal();if(isPrincipalAdmin)syncAdminPermissionsForPush().catch(()=>{});await renderNextScale();goHome();await handleDeepLink();
   if(canManage('escalas')||canManage('membros'))syncAllScheduledData().catch(e=>console.warn('Sincronização agendada',e));
   if(currentUserData.mustChangePassword===true)showPasswordModal();
 });
 
-function identifyOneSignal(){
-  const run=async()=>{try{const os=window.MVLOneSignal;if(!os||!currentUser)return;await os.login(currentUser.uid);await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});}catch(e){console.warn('OneSignal user',e);}};
-  if(window.MVLOneSignal)run();else window.addEventListener('mvl-onesignal-ready',()=>run(),{once:true});
+async function identifyOneSignal(){
+  if(!currentUser)return false;
+  const uid=String(currentUser.uid||'').trim();
+  if(!uid)return false;
+  try{
+    let os=window.MVLOneSignal;
+    if(!os){
+      os=await new Promise(resolve=>{
+        let finished=false;
+        const done=()=>{if(finished)return;finished=true;resolve(window.MVLOneSignal||null);};
+        window.addEventListener('mvl-onesignal-ready',done,{once:true});
+        const started=Date.now();
+        const timer=setInterval(()=>{
+          if(window.MVLOneSignal){clearInterval(timer);done();}
+          else if(Date.now()-started>12000){clearInterval(timer);done();}
+        },250);
+      });
+    }
+    if(!os)return false;
+
+    // O backend envia por include_aliases.external_id. Portanto cada aparelho
+    // precisa estar explicitamente associado ao UID do Firebase que está logado.
+    await os.login(uid);
+    await new Promise(r=>setTimeout(r,350));
+
+    let externalId=String(os.User?.externalId||'').trim();
+    if(externalId!==uid){
+      // Reforça a associação quando existe uma inscrição antiga/órfã no aparelho.
+      await os.login(uid);
+      await new Promise(r=>setTimeout(r,700));
+      externalId=String(os.User?.externalId||'').trim();
+    }
+
+    if(os.User?.addTags)await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',firebase_uid:uid});
+
+    // Se a permissão já foi concedida mas a inscrição ficou desativada, reativa-a.
+    if(typeof Notification!=='undefined'&&Notification.permission==='granted'&&os.User?.PushSubscription){
+      const ps=os.User.PushSubscription;
+      if(ps.optedIn===false&&typeof ps.optIn==='function'){
+        try{await ps.optIn();}catch(e){console.warn('OneSignal optIn',e);}
+      }
+    }
+
+    console.info('OneSignal MVL identificado',{uid,externalId:String(os.User?.externalId||'')});
+    return String(os.User?.externalId||'').trim()===uid;
+  }catch(e){console.warn('OneSignal user',e);return false;}
 }
+// Revalida a associação após o app voltar do segundo plano ou ser reaberto.
+window.addEventListener('focus',()=>{if(auth.currentUser)identifyOneSignal().catch(()=>{});});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&auth.currentUser)identifyOneSignal().catch(()=>{});});
 function updateRoleUI(){roleBadge.textContent=isPrincipalAdmin?'Administrador principal':isLimitedAdmin()?'Administrador':'Integrante';roleBadge.classList.toggle('admin',isAdmin);}
 function updateHeaderAvatar(){const host=$('header-avatar');if(!host)return;const url=fotoUrlUsuario(currentUserData||{});host.innerHTML=url?`<img src="${escapeAttr(url)}" alt="Perfil" referrerpolicy="no-referrer">`:memberIcon(currentUserData||{});}
 async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id');if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
@@ -680,4 +726,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.4').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.3.5').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
