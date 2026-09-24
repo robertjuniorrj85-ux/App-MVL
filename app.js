@@ -195,11 +195,41 @@ onAuthStateChanged(auth,async user=>{
   if(currentUserData.mustChangePassword===true)showPasswordModal();
 });
 
-async function syncOneSignalSubscription(){try{const os=window.MVLOneSignal;if(!os||!currentUser)return false;await os.login(currentUser.uid);await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});const sub=os.User?.PushSubscription;const subscriptionId=sub?.id;if(!subscriptionId)return false;const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'push_subscription_sync',subscriptionId})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('OneSignal subscription sync',e);return false;}}
+let mvlLastPushSyncAt=0,mvlPushSyncBusy=false;
+async function syncOneSignalSubscription(force=false){
+  if(mvlPushSyncBusy||!currentUser)return false;
+  if(!force&&Date.now()-mvlLastPushSyncAt<60000)return true;
+  mvlPushSyncBusy=true;
+  try{
+    const os=window.MVLOneSignal;if(!os)return false;
+    await os.login(currentUser.uid);
+    await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',app_version:'10.5.0'});
+    const sub=os.User?.PushSubscription;
+    const subscriptionId=String(sub?.id||'').trim();
+    if(!subscriptionId)return false;
+    const idToken=await currentUser.getIdToken();
+    const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'push_subscription_sync',subscriptionId,appVersion:'10.5.0'})});
+    const j=await r.json().catch(()=>({ok:false}));
+    if(!r.ok||!j.ok){console.warn('OneSignal subscription sync backend',j);return false;}
+    mvlLastPushSyncAt=Date.now();
+    return true;
+  }catch(e){console.warn('OneSignal subscription sync',e);return false;}
+  finally{mvlPushSyncBusy=false;}
+}
 function identifyOneSignal(){
-  const run=async()=>{try{const os=window.MVLOneSignal;if(!os||!currentUser)return;await os.login(currentUser.uid);await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true'});await syncOneSignalSubscription();const sub=os.User?.PushSubscription;if(sub?.addEventListener&&!sub.__mvlBound){sub.__mvlBound=true;sub.addEventListener('change',()=>syncOneSignalSubscription());}}catch(e){console.warn('OneSignal user',e);}};
+  const run=async()=>{try{
+    const os=window.MVLOneSignal;if(!os||!currentUser)return;
+    await os.login(currentUser.uid);
+    await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',app_version:'10.5.0'});
+    const synced=await syncOneSignalSubscription(true);
+    if(!synced){setTimeout(()=>syncOneSignalSubscription(true).catch(()=>{}),2500);setTimeout(()=>syncOneSignalSubscription(true).catch(()=>{}),8000);}
+    const sub=os.User?.PushSubscription;
+    if(sub?.addEventListener&&!sub.__mvlBound){sub.__mvlBound=true;sub.addEventListener('change',()=>syncOneSignalSubscription(true));}
+  }catch(e){console.warn('OneSignal user',e);}};
   if(window.MVLOneSignal)run();else window.addEventListener('mvl-onesignal-ready',run,{once:true});
 }
+window.addEventListener('focus',()=>{if(currentUser)syncOneSignalSubscription().catch(()=>{});});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&currentUser)syncOneSignalSubscription().catch(()=>{});});
 function updateRoleUI(){roleBadge.textContent=isPrincipalAdmin?'Administrador principal':isLimitedAdmin()?'Administrador':'Integrante';roleBadge.classList.toggle('admin',isAdmin);}
 function updateHeaderAvatar(){const host=$('header-avatar');if(!host)return;const url=fotoUrlUsuario(currentUserData||{});host.innerHTML=url?`<img src="${escapeAttr(url)}" alt="Perfil" referrerpolicy="no-referrer">`:memberIcon(currentUserData||{});}
 async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id');if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
@@ -493,7 +523,7 @@ function bindNotifications(){
 }
 function maybeBrowserNotify(n){if(!('Notification'in window)||Notification.permission!=='granted')return;try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}}
 async function requestNotifications(){
-  try{const os=window.MVLOneSignal;if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}os.login(currentUser.uid);await os.Notifications.requestPermission();await os.User.PushSubscription.optIn();await syncOneSignalSubscription();const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn;if(ok)alert('Notificações do dispositivo ativadas.');else alert('A permissão não foi concedida. Verifique as permissões do navegador.');}catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
+  try{const os=window.MVLOneSignal;if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}os.login(currentUser.uid);await os.Notifications.requestPermission();await os.User.PushSubscription.optIn();let synced=await syncOneSignalSubscription(true);if(!synced){await new Promise(r=>setTimeout(r,1500));synced=await syncOneSignalSubscription(true);}const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn&&synced;if(ok)alert('Notificações do dispositivo ativadas e registradas.');else if(os.Notifications.permission&&os.User.PushSubscription.optedIn)alert('A permissão foi concedida, mas o aparelho ainda não concluiu o registro. Feche e abra o MVL e tente novamente.');else alert('A permissão não foi concedida. Verifique as permissões do navegador.');}catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
 }
 async function renderNotifications(){
   showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">A V9.2 já identifica cada usuário no OneSignal. O envio automático de push externo depende do emissor seguro, sem expor chave no GitHub.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
@@ -691,4 +721,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.4.2').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.5.0').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
