@@ -323,23 +323,7 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .new-messages-btn:hover{background:#282828}
 
 
-/* V11.2.2 - espaço seguro global abaixo das mensagens em todos os chats */
-.chat-fullscreen .chat-list{
-  padding-bottom:140px;
-  scroll-padding-bottom:140px;
-}
-.chat-fullscreen .chat-list > :last-child{
-  margin-bottom:12px;
-}
-@media(max-width:620px){
-  .chat-fullscreen .chat-list{
-    padding-bottom:150px;
-    scroll-padding-bottom:150px;
-  }
-}
-
-
-/* V11.2.3 - reserva dinâmica do compositor no PWA instalado */
+/* V11.3.0 - reserva dinâmica do compositor no PWA instalado */
 .chat-fullscreen .chat-list{
   padding-bottom:max(24px,var(--chat-bottom-reserve,24px));
   scroll-padding-bottom:max(24px,var(--chat-bottom-reserve,24px));
@@ -350,5 +334,78 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(display-mode:standalone){
   .chat-fullscreen .chat-list{
     padding-bottom:max(calc(24px + env(safe-area-inset-bottom)),var(--chat-bottom-reserve,24px));
+  }
+}
+
+
+/* MVL V11.3.0 — layout estrutural de chat: um único scroll, compositor fora das mensagens */
+.chat-fullscreen{
+  height:calc(100dvh - 72px);
+  min-height:0;
+  overflow:hidden;
+}
+.chat-fullscreen #section-special{
+  height:calc(100dvh - 150px);
+  min-height:0;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+}
+.chat-fullscreen .conversation-chat-wrap{
+  flex:1 1 auto;
+  min-height:0;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  position:relative;
+}
+.chat-fullscreen .chat-list{
+  flex:1 1 auto;
+  min-height:0;
+  height:auto;
+  max-height:none;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  padding:8px 6px 12px;
+  scroll-padding-bottom:12px;
+}
+.chat-fullscreen .chat-compose{
+  position:static;
+  flex:0 0 auto;
+  margin:8px 0 0;
+  z-index:2;
+}
+.chat-fullscreen .chat-replying,
+.chat-fullscreen .emoji-panel,
+.chat-fullscreen .chat-pinned,
+.chat-fullscreen .conversation-manage,
+.chat-fullscreen .back-inline{
+  flex:0 0 auto;
+}
+.chat-bottom-anchor{height:1px;flex:0 0 1px;pointer-events:none}
+
+@media(max-width:620px){
+  .chat-fullscreen{
+    margin:-20px -14px -88px;
+    height:100dvh;
+    min-height:0;
+    padding:0 12px calc(78px + env(safe-area-inset-bottom));
+    overflow:hidden;
+  }
+  .chat-fullscreen #section-special{
+    height:calc(100dvh - 116px - 78px - env(safe-area-inset-bottom));
+    min-height:0;
+    overflow:hidden;
+  }
+  .chat-fullscreen .chat-list{
+    min-height:0;
+    max-height:none;
+    padding-bottom:12px;
+  }
+  .chat-fullscreen .chat-compose{
+    position:static;
+    bottom:auto;
+    margin-top:6px;
   }
 }
