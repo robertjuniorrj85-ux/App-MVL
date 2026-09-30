@@ -337,3 +337,18 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     scroll-padding-bottom:150px;
   }
 }
+
+
+/* V11.2.3 - reserva dinâmica do compositor no PWA instalado */
+.chat-fullscreen .chat-list{
+  padding-bottom:max(24px,var(--chat-bottom-reserve,24px));
+  scroll-padding-bottom:max(24px,var(--chat-bottom-reserve,24px));
+}
+.chat-fullscreen .chat-list > :last-child{
+  scroll-margin-bottom:max(16px,var(--chat-bottom-reserve,16px));
+}
+@media(display-mode:standalone){
+  .chat-fullscreen .chat-list{
+    padding-bottom:max(calc(24px + env(safe-area-inset-bottom)),var(--chat-bottom-reserve,24px));
+  }
+}

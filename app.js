@@ -40,6 +40,7 @@ let initialBootComplete=false;
 let conversationCache=[];
 let conversationCacheReady=false;
 let conversationCacheAt=0;
+let chatLayoutObserver=null;
 const CONVERSATION_CACHE_TTL=60000;
 
 const simpleSections={
@@ -75,7 +76,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.2.2';
+const MVL_VERSION='11.2.3';
 const MVL_V10_MAX_PHOTO_BYTES=2*1024*1024;
 let oneSignalSyncBound=false;
 
@@ -229,7 +230,7 @@ onAuthStateChanged(auth,async user=>{
   currentUserData=snap.data()||{};isPrincipalAdmin=currentUserData.role==='admin'&&currentUserData.adminPrincipal===true;isAdmin=isPrincipalAdmin||isLimitedAdmin();
   await setDoc(userRef,{email:user.email,ultimoAcesso:serverTimestamp()},{merge:true}).catch(()=>{});
   updateRoleUI();updateHeaderAvatar();saudacao.textContent='Olá, '+(currentUserData.nome||user.displayName||user.email.split('@')[0])+'!';
-  // V11.2.2: preserva a navegação escolhida pelo usuário durante a inicialização.
+  // V11.2.3: preserva a navegação escolhida pelo usuário durante a inicialização.
   const requestedPage=(location.hash||'').replace('#','');
   const hasDeepLink=new URLSearchParams(location.search).has('open');
   if(!initialBootComplete){
@@ -543,7 +544,7 @@ async function openScaleChat(scaleId,fromPop=false){
 async function sendChat(scale){const input=$('chat-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';try{await addDoc(collection(db,'escalas',scale.id,'chat'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()});const recipients=[...scaleParticipants(scale),...adminIdsFor('chats')].filter((v,i,a)=>v!==currentUser.uid&&a.indexOf(v)===i);if(recipients.length){createNotifications(recipients,`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,'chat_escala',scale.id).catch(()=>{});enviarPushMVL('chat_escala',`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,recipients,`https://robertjuniorrj85-ux.github.io/App-MVL/?open=scalechat&id=${encodeURIComponent(scale.id)}`).catch(()=>{});}}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
 
 
-// CENTRAL DE CONVERSAS - V11.2.2
+// CENTRAL DE CONVERSAS - V11.2.3
 const GENERAL_CHAT_ID='chat-geral';
 function conversationTitle(c={}){
   if(c.tipo!=='privado')return c.nome||'Conversa';
@@ -658,16 +659,32 @@ async function deleteConversationCascade(c){
   }
 }
 async function openConversation(id,fromPop=false){
+  if(chatLayoutObserver){chatLayoutObserver.disconnect();chatLayoutObserver=null;}
   const snap=await getDoc(doc(db,'conversas',id));if(!snap.exists()){alert('Conversa não encontrada.');return;}const c={id,...snap.data()};if(!(c.participanteIds||[]).includes(currentUser.uid)){alert('Você não participa desta conversa.');return;}
   currentPage='conversas';if(!fromPop)pushNav('conversa',id);homeView.classList.add('hide');sectionView.classList.remove('hide');sectionView.classList.add('chat-fullscreen');showSectionHeader(conversationTitle(c),'Central de Conversas');adminPanel.classList.add('hide');listEl.innerHTML='';
   const manager=await renderConversationManager(c);sectionSpecial.innerHTML=`<button id="conversation-back" class="back-inline">← Conversas</button>${c.mensagemFixada?.mensagem?`<div class="chat-pinned">📌 <b>${escapeHtml(c.mensagemFixada.autorNome||'')}</b>: ${escapeHtml(c.mensagemFixada.mensagem)}</div>`:''}${manager}<div class="conversation-chat-wrap"><div id="conversation-chat-list" class="chat-list"></div><button id="conversation-new-messages" class="new-messages-btn hide" type="button">↓ Novas mensagens</button></div><div id="chat-replying" class="chat-replying hide"></div><div id="conversation-emoji-panel" class="emoji-panel hide">${MVL_EMOJIS.map(e=>`<button type="button" class="emoji-choice">${e}</button>`).join('')}</div><div class="chat-compose"><button id="conversation-emoji" class="emoji-btn" type="button">😊</button><textarea id="conversation-input" placeholder="Digite sua mensagem..."></textarea><button id="conversation-send" class="primary">Enviar</button></div>`;
-  $('conversation-back').onclick=()=>history.back();let replyingTo=null;let conversationInitialPaint=true;let forceConversationBottom=false;const scrollConversationBottom=(smooth=false)=>{
+  $('conversation-back').onclick=()=>history.back();let replyingTo=null;let conversationInitialPaint=true;let forceConversationBottom=false;
+  const syncConversationViewport=()=>{
+    const box=$('conversation-chat-list'),composer=sectionSpecial.querySelector('.chat-compose');if(!box||!composer)return;
+    const br=box.getBoundingClientRect(),cr=composer.getBoundingClientRect();
+    // Reserva exatamente a área que o compositor sobrepõe no PWA standalone.
+    const overlap=Math.max(0,Math.ceil(br.bottom-cr.top));
+    const safeGap=16;
+    box.style.setProperty('--chat-bottom-reserve',`${overlap+safeGap}px`);
+  };
+  const scrollConversationBottom=(smooth=false)=>{
     const box=$('conversation-chat-list');if(!box)return;
-    const go=()=>{const last=box.lastElementChild;if(last)last.scrollIntoView({block:'end',inline:'nearest',behavior:smooth?'smooth':'auto'});box.scrollTop=box.scrollHeight;};
-    // Mobile/PWA pode concluir layout, fontes e avatares depois do primeiro frame.
+    const go=()=>{syncConversationViewport();box.scrollTo({top:box.scrollHeight,left:0,behavior:smooth?'smooth':'auto'});};
     requestAnimationFrame(()=>{go();requestAnimationFrame(go);});
     setTimeout(go,80);setTimeout(go,220);setTimeout(go,500);
-  };$('conversation-new-messages')?.addEventListener('click',()=>{scrollConversationBottom(true);$('conversation-new-messages')?.classList.add('hide');});
+  };
+  const composerEl=sectionSpecial.querySelector('.chat-compose');
+  const viewportSync=()=>{syncConversationViewport();if(conversationInitialPaint||forceConversationBottom)scrollConversationBottom(false);};
+  if(window.ResizeObserver&&composerEl){const ro=new ResizeObserver(viewportSync);ro.observe(composerEl);ro.observe($('conversation-chat-list'));chatLayoutObserver=ro;}
+  window.visualViewport?.addEventListener('resize',viewportSync);
+  window.visualViewport?.addEventListener('scroll',viewportSync);
+  syncConversationViewport();
+  $('conversation-new-messages')?.addEventListener('click',()=>{scrollConversationBottom(true);$('conversation-new-messages')?.classList.add('hide');});
   $('conversation-emoji').onclick=()=>$('conversation-emoji-panel').classList.toggle('hide');document.querySelectorAll('#conversation-emoji-panel .emoji-choice').forEach(b=>b.onclick=()=>{const input=$('conversation-input');input.value+=b.textContent;input.focus();});
   $('manage-conv-save')?.addEventListener('click',async()=>{const nome=$('manage-conv-name').value.trim(),ids=[...document.querySelectorAll('.manage-member:checked')].map(x=>x.value);if(!ids.includes(currentUser.uid))ids.push(currentUser.uid);const mods=[...document.querySelectorAll('.manage-mod:checked')].map(x=>x.value).filter(x=>ids.includes(x));if(!nome||!ids.length)return alert('A conversa precisa ter nome e participantes.');await updateDoc(doc(db,'conversas',id),{nome,participanteIds:[...new Set(ids)],moderadorIds:[...new Set(mods)],atualizadoEm:serverTimestamp()});openConversation(id);});
   $('manage-conv-delete')?.addEventListener('click',()=>deleteConversationCascade(c));
@@ -711,7 +728,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.2.2: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.2.3: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -906,4 +923,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.2.2').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.2.3').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
