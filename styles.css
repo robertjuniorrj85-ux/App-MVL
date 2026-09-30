@@ -321,3 +321,19 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .conversation-chat-wrap{position:relative}
 .new-messages-btn{position:absolute;right:14px;bottom:12px;z-index:4;border:1px solid #4a4a4a;border-radius:999px;background:#1b1b1b;color:#fff;padding:8px 12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.35)}
 .new-messages-btn:hover{background:#282828}
+
+
+/* V11.2.2 - espaço seguro global abaixo das mensagens em todos os chats */
+.chat-fullscreen .chat-list{
+  padding-bottom:140px;
+  scroll-padding-bottom:140px;
+}
+.chat-fullscreen .chat-list > :last-child{
+  margin-bottom:12px;
+}
+@media(max-width:620px){
+  .chat-fullscreen .chat-list{
+    padding-bottom:150px;
+    scroll-padding-bottom:150px;
+  }
+}
