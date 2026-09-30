@@ -75,7 +75,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.0.3';
+const MVL_VERSION='11.1.0';
 const MVL_V10_MAX_PHOTO_BYTES=2*1024*1024;
 let oneSignalSyncBound=false;
 
@@ -229,7 +229,7 @@ onAuthStateChanged(auth,async user=>{
   currentUserData=snap.data()||{};isPrincipalAdmin=currentUserData.role==='admin'&&currentUserData.adminPrincipal===true;isAdmin=isPrincipalAdmin||isLimitedAdmin();
   await setDoc(userRef,{email:user.email,ultimoAcesso:serverTimestamp()},{merge:true}).catch(()=>{});
   updateRoleUI();updateHeaderAvatar();saudacao.textContent='Olá, '+(currentUserData.nome||user.displayName||user.email.split('@')[0])+'!';
-  // V11.0.3: não força a Home depois que o usuário já navegou.
+  // V11.1.0: não força a Home depois que o usuário já navegou.
   const requestedPage=(location.hash||'').replace('#','');
   const hasDeepLink=new URLSearchParams(location.search).has('open');
   if(!initialBootComplete){
@@ -543,7 +543,7 @@ async function openScaleChat(scaleId,fromPop=false){
 async function sendChat(scale){const input=$('chat-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';try{await addDoc(collection(db,'escalas',scale.id,'chat'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()});const recipients=[...scaleParticipants(scale),...adminIdsFor('chats')].filter((v,i,a)=>v!==currentUser.uid&&a.indexOf(v)===i);if(recipients.length){createNotifications(recipients,`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,'chat_escala',scale.id).catch(()=>{});enviarPushMVL('chat_escala',`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,recipients,`https://robertjuniorrj85-ux.github.io/App-MVL/?open=scalechat&id=${encodeURIComponent(scale.id)}`).catch(()=>{});}}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
 
 
-// CENTRAL DE CONVERSAS - V11.0.3
+// CENTRAL DE CONVERSAS - V11.1.0
 const GENERAL_CHAT_ID='chat-geral';
 function conversationTitle(c={}){
   if(c.tipo!=='privado')return c.nome||'Conversa';
@@ -632,7 +632,30 @@ function openPrivateConversationCreator(){
 async function renderConversationManager(c){
   if(!conversationCanModerate(c)||c.tipo==='privado')return '';
   const ids=new Set(c.participanteIds||[]),mods=new Set(c.moderadorIds||[]);
-  return `<details class="conversation-manage"><summary>⚙️ Gerenciar conversa</summary><div class="form-grid"><input id="manage-conv-name" value="${escapeAttr(c.nome||'')}"><div class="multi-list">${usersCache.map(u=>`<label class="multi-item"><input class="manage-member" type="checkbox" value="${u.id}" ${ids.has(u.id)?'checked':''}> ${memberAvatarHtml(u,'member-avatar')} <span>${escapeHtml(u.nome||u.email||u.id)}</span></label>`).join('')}</div><div class="multi-list">${usersCache.filter(u=>ids.has(u.id)).map(u=>`<label class="multi-item"><input class="manage-mod" type="checkbox" value="${u.id}" ${mods.has(u.id)?'checked':''}> <span>Moderador: ${escapeHtml(u.nome||u.email||u.id)}</span></label>`).join('')}</div><button id="manage-conv-save" class="primary" type="button">Salvar conversa</button></div></details>`;
+  return `<details class="conversation-manage"><summary>⚙️ Gerenciar conversa</summary><div class="form-grid"><input id="manage-conv-name" value="${escapeAttr(c.nome||'')}"><div class="multi-list">${usersCache.map(u=>`<label class="multi-item"><input class="manage-member" type="checkbox" value="${u.id}" ${ids.has(u.id)?'checked':''}> ${memberAvatarHtml(u,'member-avatar')} <span>${escapeHtml(u.nome||u.email||u.id)}</span></label>`).join('')}</div><div class="multi-list">${usersCache.filter(u=>ids.has(u.id)).map(u=>`<label class="multi-item"><input class="manage-mod" type="checkbox" value="${u.id}" ${mods.has(u.id)?'checked':''}> <span>Moderador: ${escapeHtml(u.nome||u.email||u.id)}</span></label>`).join('')}</div><button id="manage-conv-save" class="primary" type="button">Salvar conversa</button>${c.tipo==='grupo'?'<button id="manage-conv-delete" class="delete-btn" type="button">🗑️ Excluir conversa</button>':''}</div></details>`;
+}
+async function deleteConversationCascade(c){
+  if(!c?.id||c.tipo!=='grupo'||!(isPrincipalAdmin||canManage('chats')))return;
+  const ok=confirm(`Excluir definitivamente o grupo “${conversationTitle(c)}” e todas as mensagens?`);
+  if(!ok)return;
+  try{
+    // Apaga primeiro as subcoleções para não deixar mensagens/reacões/leitura órfãs.
+    for(const sub of ['mensagens','reacoes','leituras']){
+      const snap=await getDocs(collection(db,'conversas',c.id,sub));
+      const refs=snap.docs.map(d=>d.ref);
+      for(let i=0;i<refs.length;i+=400){
+        const batch=writeBatch(db);refs.slice(i,i+400).forEach(ref=>batch.delete(ref));await batch.commit();
+      }
+    }
+    await deleteDoc(doc(db,'conversas',c.id));
+    conversationCache=conversationCache.filter(x=>x.id!==c.id);conversationCacheReady=false;conversationCacheAt=0;
+    if(chatUnsub){chatUnsub();chatUnsub=null;}
+    alert('Conversa excluída com sucesso.');
+    await openSection('conversas',true);
+  }catch(e){
+    console.error('Falha ao excluir conversa',e);
+    alert(`Não foi possível excluir a conversa${e?.code?` (${e.code})`:''}.`);
+  }
 }
 async function openConversation(id,fromPop=false){
   const snap=await getDoc(doc(db,'conversas',id));if(!snap.exists()){alert('Conversa não encontrada.');return;}const c={id,...snap.data()};if(!(c.participanteIds||[]).includes(currentUser.uid)){alert('Você não participa desta conversa.');return;}
@@ -641,6 +664,7 @@ async function openConversation(id,fromPop=false){
   $('conversation-back').onclick=()=>history.back();let replyingTo=null;
   $('conversation-emoji').onclick=()=>$('conversation-emoji-panel').classList.toggle('hide');document.querySelectorAll('#conversation-emoji-panel .emoji-choice').forEach(b=>b.onclick=()=>{const input=$('conversation-input');input.value+=b.textContent;input.focus();});
   $('manage-conv-save')?.addEventListener('click',async()=>{const nome=$('manage-conv-name').value.trim(),ids=[...document.querySelectorAll('.manage-member:checked')].map(x=>x.value);if(!ids.includes(currentUser.uid))ids.push(currentUser.uid);const mods=[...document.querySelectorAll('.manage-mod:checked')].map(x=>x.value).filter(x=>ids.includes(x));if(!nome||!ids.length)return alert('A conversa precisa ter nome e participantes.');await updateDoc(doc(db,'conversas',id),{nome,participanteIds:[...new Set(ids)],moderadorIds:[...new Set(mods)],atualizadoEm:serverTimestamp()});openConversation(id);});
+  $('manage-conv-delete')?.addEventListener('click',()=>deleteConversationCascade(c));
   const setReply=m=>{replyingTo=m;const h=$('chat-replying');h.classList.remove('hide');h.innerHTML=`<span>Respondendo a <b>${escapeHtml(m.autorNome||'Integrante')}</b>: ${escapeHtml((m.mensagem||'').slice(0,80))}</span><button type="button">✕</button>`;h.querySelector('button').onclick=()=>{replyingTo=null;h.classList.add('hide');h.innerHTML='';};$('conversation-input').focus();};
   $('conversation-send').onclick=async()=>{const input=$('conversation-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';const payload={autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()};if(replyingTo)payload.respostaA={id:replyingTo.id,autorNome:replyingTo.autorNome||'Integrante',mensagem:(replyingTo.mensagem||'').slice(0,180)};await addDoc(collection(db,'conversas',id,'mensagens'),payload);replyingTo=null;$('chat-replying').classList.add('hide');await updateDoc(doc(db,'conversas',id),{ultimaMensagem:mensagem.slice(0,120),ultimaMensagemPor:currentUser.uid,ultimaMensagemEm:serverTimestamp(),atualizadoEm:serverTimestamp()});const recipients=(c.participanteIds||[]).filter(x=>x!==currentUser.uid);if(recipients.length){createNotifications(recipients,conversationTitle(c),`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,'conversa',id).catch(()=>{});enviarPushMVL('chat_geral',conversationTitle(c),`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,recipients,`https://robertjuniorrj85-ux.github.io/App-MVL/?open=conversas&id=${encodeURIComponent(id)}`).catch(()=>{});}};
   if(chatUnsub)chatUnsub();let reactions=[];
@@ -681,7 +705,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.0.3: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.1.0: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -876,4 +900,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.0.3').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.1.0').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
