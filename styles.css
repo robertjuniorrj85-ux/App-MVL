@@ -264,7 +264,7 @@ nav{grid-template-columns:repeat(5,1fr)}
 
 /* V10.3.3 - Home e Escalas ordenadas por todos os encontros, sem filtro de evento principal */
 
-/* MVL V11.0.0 — Central de Conversas, histórico e refinamentos responsivos */
+/* MVL V11.0.1 — Central de Conversas, histórico e refinamentos responsivos */
 .chat-fullscreen .section-top{position:sticky;top:0;z-index:30;background:#070708;padding-top:10px}
 .chat-fullscreen{min-height:calc(100dvh - 72px)}
 .chat-fullscreen #section-special{display:flex;flex-direction:column;min-height:calc(100dvh - 150px)}
@@ -304,7 +304,7 @@ nav{grid-template-columns:repeat(5,1fr)}
   .chat-message{max-width:90%}
 }
 
-/* V11.0.0 - navegação e Central de Conversas */
+/* V11.0.1 - navegação e Central de Conversas */
 nav .nav-btn{min-width:0;padding-left:4px;padding-right:4px}
 nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chat-pinned{margin:8px 0 10px;padding:9px 11px;border:1px solid #5a3b12;border-radius:11px;background:#1b1409;color:#f2d6a2;font-size:12px}

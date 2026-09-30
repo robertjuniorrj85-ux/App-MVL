@@ -70,7 +70,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.0.0';
+const MVL_VERSION='11.0.1';
 const MVL_V10_MAX_PHOTO_BYTES=2*1024*1024;
 let oneSignalSyncBound=false;
 
@@ -526,7 +526,7 @@ async function openScaleChat(scaleId){
 async function sendChat(scale){const input=$('chat-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';try{await addDoc(collection(db,'escalas',scale.id,'chat'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()});const recipients=[...scaleParticipants(scale),...adminIdsFor('chats')].filter((v,i,a)=>v!==currentUser.uid&&a.indexOf(v)===i);if(recipients.length){createNotifications(recipients,`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,'chat_escala',scale.id).catch(()=>{});enviarPushMVL('chat_escala',`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,recipients,`https://robertjuniorrj85-ux.github.io/App-MVL/?open=scalechat&id=${encodeURIComponent(scale.id)}`).catch(()=>{});}}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
 
 
-// CENTRAL DE CONVERSAS - V11.0.0
+// CENTRAL DE CONVERSAS - V11.0.1
 const GENERAL_CHAT_ID='chat-geral';
 function conversationTitle(c={}){
   if(c.tipo!=='privado')return c.nome||'Conversa';
@@ -560,11 +560,25 @@ async function markConversationRead(id){try{await setDoc(doc(db,'conversas',id,'
 async function renderConversations(){
   showSectionHeader('Chat','Chat Geral, conversas privadas, grupos e chats das escalas.');
   adminPanel.classList.add('hide');await refreshCaches();await ensureGeneralConversation().catch(e=>console.error('Chat Geral',e));
-  let convs=await safeDocs('conversas');convs=convs.filter(c=>(c.participanteIds||[]).includes(currentUser.uid)).sort(byCreatedDesc);
+  let convs=[];
+  try{
+    const convSnap=await getDocs(query(collection(db,'conversas'),where('participanteIds','array-contains',currentUser.uid)));
+    convs=convSnap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);
+  }catch(e){
+    console.error('Falha ao carregar conversas',e);
+    sectionSpecial.innerHTML='<div class="empty">Não foi possível carregar as conversas. Tente novamente em instantes.</div>';
+    return;
+  }
   const admin=isPrincipalAdmin||canManage('chats');
   sectionSpecial.innerHTML=`<div class="conversation-toolbar">${admin?'<button id="new-conversation" class="primary">+ Novo grupo</button>':''}<button id="new-private-conversation" class="secondary">+ Conversa privada</button></div><div class="conversation-list" id="conversation-list"></div>`;
   const host=$('conversation-list');
-  const scaleRows=scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid)||canManage('chats')).map(s=>({kind:'scale',id:s.id,nome:`${scaleSingerName(s)} • ${s.evento||'Escala'}`,sub:'Chat da escala'}));
+  const chatScaleIsActive=s=>{
+    const last=latestEncounterOfScale(s);
+    if(!last?.data)return true;
+    const end=new Date(`${last.data}T${last.horario||'23:59'}:59`);
+    return Number.isNaN(end.getTime())||end.getTime()>=Date.now();
+  };
+  const scaleRows=scalesCache.filter(s=>chatScaleIsActive(s)&&(scaleParticipants(s).includes(currentUser.uid)||canManage('chats'))).map(s=>({kind:'scale',id:s.id,nome:`${scaleSingerName(s)} • ${s.evento||'Escala'}`,sub:'Chat da escala'}));
   const rows=[...convs.map(c=>({kind:'conversation',...c})),...scaleRows];
   if(!rows.length)host.innerHTML='<div class="empty">Nenhuma conversa disponível.</div>';
   for(const c of rows){
@@ -580,12 +594,12 @@ function openConversationCreator(){
   const memberRows=usersCache.map(u=>`<label class="multi-item"><input class="conv-member" type="checkbox" value="${u.id}"> ${memberAvatarHtml(u,'member-avatar')} <span>${escapeHtml(u.nome||u.email||u.id)}</span>${teamBadges(u)}</label>`).join('');
   sectionSpecial.innerHTML=`<button id="conv-create-back" class="back-inline">← Voltar</button><div class="admin-panel"><h3>Novo grupo</h3><div class="form-grid"><input id="conv-name" placeholder="Nome da conversa"><select id="conv-scope"><option value="mvl">Somente MVL</option><option value="nova_geracao">Somente Nova Geração</option><option value="personalizado">Personalizado</option></select><div id="conv-members" class="multi-list">${memberRows}</div></div><div class="form-actions"><button id="conv-save" class="primary">Criar conversa</button></div></div>`;
   $('conv-create-back').onclick=renderConversations;const applyScope=()=>{const scope=$('conv-scope').value;document.querySelectorAll('.conv-member').forEach(ch=>{const u=usersCache.find(x=>x.id===ch.value);ch.checked=scope==='personalizado'?ch.checked:hasTeam(u,scope);ch.disabled=scope!=='personalizado';});};$('conv-scope').onchange=applyScope;applyScope();
-  $('conv-save').onclick=async()=>{const nome=$('conv-name').value.trim(),scope=$('conv-scope').value,ids=[...document.querySelectorAll('.conv-member:checked')].map(x=>x.value);if(!nome||!ids.length){alert('Informe o nome e selecione os participantes.');return;}if(!ids.includes(currentUser.uid))ids.push(currentUser.uid);await addDoc(collection(db,'conversas'),{nome,tipo:'grupo',escopo:scope,participanteIds:[...new Set(ids)],moderadorIds:[currentUser.uid],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});renderConversations();};
+  $('conv-save').onclick=async()=>{const nome=$('conv-name').value.trim(),scope=$('conv-scope').value,ids=[...document.querySelectorAll('.conv-member:checked')].map(x=>x.value);if(!nome||!ids.length){alert('Informe o nome e selecione os participantes.');return;}if(!ids.includes(currentUser.uid))ids.push(currentUser.uid);try{const ref=await addDoc(collection(db,'conversas'),{nome,tipo:'grupo',escopo:scope,participanteIds:[...new Set(ids)],moderadorIds:[currentUser.uid],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});await openConversation(ref.id);}catch(e){console.error('Falha ao criar grupo',e);alert('Não foi possível criar o chat. Verifique sua permissão de Chat e tente novamente.');}};
 }
 function openPrivateConversationCreator(){
   const options=usersCache.filter(u=>u.id!==currentUser.uid).map(u=>`<option value="${u.id}">${escapeHtml(u.nome||u.email||u.id)}</option>`).join('');
   sectionSpecial.innerHTML=`<button id="private-back" class="back-inline">← Voltar</button><div class="admin-panel"><h3>Nova conversa privada</h3><div class="form-grid"><select id="private-user"><option value="">Selecione uma pessoa</option>${options}</select></div><div class="form-actions"><button id="private-open" class="primary">Abrir conversa</button></div></div>`;
-  $('private-back').onclick=renderConversations;$('private-open').onclick=async()=>{const other=$('private-user').value;if(!other)return alert('Selecione uma pessoa.');const ids=[currentUser.uid,other].sort(),id=`priv_${ids.join('_')}`,ref=doc(db,'conversas',id);try{await setDoc(ref,{nome:'Conversa privada',tipo:'privado',participanteIds:ids,moderadorIds:[],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});}catch(e){console.info('Conversa privada já existente ou protegida; abrindo conversa.',e?.code||'');}openConversation(id);};
+  $('private-back').onclick=renderConversations;$('private-open').onclick=async()=>{const other=$('private-user').value;if(!other)return alert('Selecione uma pessoa.');const ids=[currentUser.uid,other].sort(),id=`priv_${ids.join('_')}`,ref=doc(db,'conversas',id);try{const existing=await getDoc(ref);if(!existing.exists()){await setDoc(ref,{nome:'Conversa privada',tipo:'privado',participanteIds:ids,moderadorIds:[],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});}await openConversation(id);}catch(e){console.error('Falha ao abrir conversa privada',e);alert('Não foi possível abrir a conversa privada.');}};
 }
 async function renderConversationManager(c){
   if(!conversationCanModerate(c)||c.tipo==='privado')return '';
@@ -639,7 +653,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.0.0: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.0.1: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -834,4 +848,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.0.0').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.0.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
