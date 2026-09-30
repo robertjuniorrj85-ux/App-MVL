@@ -35,6 +35,7 @@ let usersCache=[],songsCache=[],repertoiresCache=[],agendasCache=[],scalesCache=
 let notifUnsub=null,lastNotificationIds=new Set(),chatUnsub=null;
 let calDate=new Date(),selectedDate=dateKey(new Date());
 let navStack=['inicio'];
+let showPastScales=false;
 
 const simpleSections={
   avisos:{title:'Avisos',subtitle:'Comunicados para os integrantes.',collection:'avisos',fields:[['titulo','Título','text'],['mensagem','Mensagem','textarea']]},
@@ -69,7 +70,40 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
+const MVL_VERSION='11.0.0';
 const MVL_V10_MAX_PHOTO_BYTES=2*1024*1024;
+let oneSignalSyncBound=false;
+
+async function syncOneSignalSubscription({waitMs=8000}={}){
+  if(!currentUser) return false;
+  const os=window.MVLOneSignal;
+  if(!os) return false;
+  try{
+    await os.login(currentUser.uid);
+    await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',mvlVersion:MVL_VERSION});
+    const started=Date.now();
+    let sid='';
+    while(Date.now()-started<waitMs){
+      sid=String(os.User?.PushSubscription?.id||'').trim();
+      if(sid) break;
+      await new Promise(r=>setTimeout(r,250));
+    }
+    if(!sid) return false;
+    await chamarBackendV10('push_subscription_sync',{subscriptionId:sid});
+    return true;
+  }catch(e){
+    console.warn('OneSignal subscription sync',e);
+    return false;
+  }
+}
+
+function bindOneSignalSubscriptionChanges(){
+  if(oneSignalSyncBound)return;
+  const os=window.MVLOneSignal;
+  if(!os?.User?.PushSubscription?.addEventListener)return;
+  oneSignalSyncBound=true;
+  os.User.PushSubscription.addEventListener('change',()=>syncOneSignalSubscription({waitMs:10000}).catch(()=>{}));
+}
 async function chamarBackendV10(tipo,payload={}){
   if(!currentUser)throw new Error('Usuário não autenticado.');
   const idToken=await currentUser.getIdToken(true);
@@ -195,59 +229,40 @@ onAuthStateChanged(auth,async user=>{
   if(currentUserData.mustChangePassword===true)showPasswordModal();
 });
 
-let mvlLastPushSyncAt=0,mvlPushSyncBusy=false;
-async function syncOneSignalSubscription(force=false){
-  if(mvlPushSyncBusy||!currentUser)return false;
-  if(!force&&Date.now()-mvlLastPushSyncAt<60000)return true;
-  mvlPushSyncBusy=true;
-  try{
-    const os=window.MVLOneSignal;if(!os)return false;
-    await os.login(currentUser.uid);
-    await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',app_version:'10.5.0'});
-    const sub=os.User?.PushSubscription;
-    const subscriptionId=String(sub?.id||'').trim();
-    if(!subscriptionId)return false;
-    const idToken=await currentUser.getIdToken();
-    const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'push_subscription_sync',subscriptionId,appVersion:'10.5.0'})});
-    const j=await r.json().catch(()=>({ok:false}));
-    if(!r.ok||!j.ok){console.warn('OneSignal subscription sync backend',j);return false;}
-    mvlLastPushSyncAt=Date.now();
-    return true;
-  }catch(e){console.warn('OneSignal subscription sync',e);return false;}
-  finally{mvlPushSyncBusy=false;}
-}
 function identifyOneSignal(){
-  const run=async()=>{try{
-    const os=window.MVLOneSignal;if(!os||!currentUser)return;
-    await os.login(currentUser.uid);
-    await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',app_version:'10.5.0'});
-    const synced=await syncOneSignalSubscription(true);
-    if(!synced){setTimeout(()=>syncOneSignalSubscription(true).catch(()=>{}),2500);setTimeout(()=>syncOneSignalSubscription(true).catch(()=>{}),8000);}
-    const sub=os.User?.PushSubscription;
-    if(sub?.addEventListener&&!sub.__mvlBound){sub.__mvlBound=true;sub.addEventListener('change',()=>syncOneSignalSubscription(true));}
-  }catch(e){console.warn('OneSignal user',e);}};
+  const run=async()=>{
+    try{
+      const os=window.MVLOneSignal;
+      if(!os||!currentUser)return;
+      await os.login(currentUser.uid);
+      await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',mvlVersion:MVL_VERSION});
+      bindOneSignalSubscriptionChanges();
+      if(os.Notifications.permission && os.User.PushSubscription.optedIn){
+        await syncOneSignalSubscription({waitMs:10000});
+      }
+    }catch(e){console.warn('OneSignal user',e);}
+  };
   if(window.MVLOneSignal)run();else window.addEventListener('mvl-onesignal-ready',run,{once:true});
 }
-window.addEventListener('focus',()=>{if(currentUser)syncOneSignalSubscription().catch(()=>{});});
-document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&currentUser)syncOneSignalSubscription().catch(()=>{});});
 function updateRoleUI(){roleBadge.textContent=isPrincipalAdmin?'Administrador principal':isLimitedAdmin()?'Administrador':'Integrante';roleBadge.classList.toggle('admin',isAdmin);}
 function updateHeaderAvatar(){const host=$('header-avatar');if(!host)return;const url=fotoUrlUsuario(currentUserData||{});host.innerHTML=url?`<img src="${escapeAttr(url)}" alt="Perfil" referrerpolicy="no-referrer">`:memberIcon(currentUserData||{});}
-async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id');if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
+async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id');if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='conversas'&&id)await openConversation(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
 async function openNotificationTarget(n){if(!n)return;if(n.lida!==true)await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()}).catch(()=>{});if(n.tipo==='chat_escala'&&n.refId)return openScaleChat(n.refId);if(n.tipo==='mensagem')return openSection('comunicacao');if(n.tipo==='agenda')return openSection('agenda');if(n.tipo==='confirmacao_escala'&&n.refId)return openScaleDetail(n.refId);return openSection('notificacoes');}
 function pushNav(page){if(navStack[navStack.length-1]!==page){navStack.push(page);history.pushState({mvl:true,page},'','#'+page);}}
-function goHome(fromPop=false){currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale().catch(e=>console.error('Próximo culto',e));renderPrayerCard().catch(e=>{console.error('Oração Home',e);const h=$('prayer-card');if(h)h.innerHTML='<p class=\"muted\">Não foi possível carregar o espaço de oração.</p>';});renderBirthdayCard().catch(e=>{console.error('Aniversariantes Home',e);const h=$('birthday-card');if(h)h.innerHTML='<p class=\"muted\">Não foi possível carregar os aniversariantes.</p>';});if(!fromPop)pushNav('inicio');}
+function goHome(fromPop=false){sectionView.classList.remove('chat-fullscreen');currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale().catch(e=>console.error('Próximo culto',e));renderPrayerCard().catch(e=>{console.error('Oração Home',e);const h=$('prayer-card');if(h)h.innerHTML='<p class=\"muted\">Não foi possível carregar o espaço de oração.</p>';});renderBirthdayCard().catch(e=>{console.error('Aniversariantes Home',e);const h=$('birthday-card');if(h)h.innerHTML='<p class=\"muted\">Não foi possível carregar os aniversariantes.</p>';});if(!fromPop)pushNav('inicio');}
 window.addEventListener('popstate',()=>{if(chatUnsub){chatUnsub();chatUnsub=null;}if(navStack.length>1)navStack.pop();const target=navStack[navStack.length-1]||'inicio';if(target==='inicio')goHome(true);else openSection(target,true);});
 function setActiveNav(page){document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
 function showSectionHeader(title,subtitle){sectionTitle.textContent=title;sectionSubtitle.textContent=subtitle;}
 function resetEditor(){editingId=null;cancelEditBtn.classList.add('hide');saveBtn.textContent='Salvar';openSection(currentPage);}
 
 async function openSection(page,fromPop=false){
+  sectionView.classList.remove('chat-fullscreen');
   if(chatUnsub){chatUnsub();chatUnsub=null;}
   currentPage=page;editingId=null;homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav(page);if(!fromPop)pushNav(page);
   sectionSpecial.innerHTML='';dynamicForm.innerHTML='';listEl.innerHTML='';cancelEditBtn.classList.add('hide');saveBtn.textContent='Salvar';
   if(simpleSections[page])return renderSimpleSection(page);
   if(page==='musicas')return renderSongs();if(page==='cifras')return renderCharts();if(page==='escalas')return renderScales();if(page==='repertorio')return renderRepertoires();
-  if(page==='agenda')return renderAgenda();if(page==='calendario')return renderCalendar();if(page==='comunicacao')return renderCommunication();
+  if(page==='agenda')return renderAgenda();if(page==='calendario')return renderCalendar();if(page==='conversas')return renderConversations();if(page==='comunicacao')return renderCommunication();
   if(page==='perfil')return renderProfile();if(page==='membros')return renderMembers();if(page==='notificacoes')return renderNotifications();
 }
 
@@ -321,7 +336,7 @@ async function renderSongs(editItem=null){
   listEl.innerHTML='';if(!songsCache.length){listEl.innerHTML='<div class="empty">Nenhuma música cadastrada.</div>';return;}
   songsCache.sort((a,b)=>(a.titulo||'').localeCompare(b.titulo||''));
   for(const s of songsCache){const card=document.createElement('div');card.className='item-card';const linked=chartsCache.filter(c=>chartSongId(c)===s.id).map(c=>`${c.cantorId?(c.cantorNome||userName(c.cantorId)):'Padrão'} — ${c.tom||'sem tom'}`).join(' • ');card.innerHTML=`<h3>🎵 ${escapeHtml(s.titulo||'Sem título')}</h3><div class="item-meta">${escapeHtml(s.artistaReferencia||s.artista||'')}</div><div class="item-meta"><b>Tom original:</b> ${escapeHtml(s.tomOriginal||s.tom||'—')}</div>${linked?`<div class="item-meta"><b>Cifras/Tons:</b> ${escapeHtml(linked)}</div>`:''}<div class="item-actions">${safeUrl(s.ouvirLink||s.link)?`<a class="link-btn" href="${escapeAttr(s.ouvirLink||s.link)}" target="_blank" rel="noopener">▶️ Ouvir</a>`:''}${safeUrl(s.multitrackLink)?`<a class="link-btn" href="${escapeAttr(s.multitrackLink)}" target="_blank" rel="noopener">🎚️ Multitrack</a>`:''}${allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':''}</div>`;
-    if(allowed){card.querySelector('.edit-btn').onclick=()=>renderSongs(s);card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir esta música?')){await deleteDoc(doc(db,'musicas',s.id));renderSongs();}};}listEl.appendChild(card);}
+    if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderSongs(s);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir esta música?')){await deleteDoc(doc(db,'musicas',s.id));renderSongs();}};}listEl.appendChild(card);}
 }
 function renderVersionRows(rows){const el=$('version-list');el.innerHTML='';(rows.length?rows:[{}]).forEach(addVersionRow);}
 function addVersionRow(v={}){const el=$('version-list');if(!el)return;const row=document.createElement('div');row.className='version-row';row.innerHTML=`<select class="v-singer"><option value="">Selecione o cantor</option>${usersCache.map(u=>`<option value="${u.id}" ${v.cantorId===u.id?'selected':''}>${escapeHtml(u.nome||u.email||u.id)}</option>`).join('')}</select><input class="v-key" placeholder="Tom" value="${escapeAttr(v.tom||'')}"><input class="v-chart" type="url" placeholder="Cifra específica (opcional)" value="${escapeAttr(v.cifraLink||'')}"><input class="v-listen" type="url" placeholder="Link para ouvir (opcional)" value="${escapeAttr(v.ouvirLink||'')}"><input class="v-multi" type="url" placeholder="Multitrack (opcional)" value="${escapeAttr(v.multitrackLink||'')}"><button type="button" class="danger remove-version">Remover</button>`;row.querySelector('.remove-version').onclick=()=>row.remove();el.appendChild(row);}
@@ -341,9 +356,23 @@ async function renderRepertoires(editItem=null){
       <div class="subpanel"><b>Selecione as músicas</b><div class="multi-list" id="rep-song-options">${songsCache.length?songsCache.map(s=>`<label class="multi-item"><input class="rep-check" type="checkbox" value="${s.id}"> ${escapeHtml(s.titulo||'Sem título')}</label>`).join(''):'<span class="muted">Cadastre músicas primeiro.</span>'}</div><div id="rep-config-list" class="rep-config-list"></div></div>
     </div>`;wireRepSelector(d.musicaItens||legacyRepItems(d));saveBtn.onclick=saveRepertoire;}
   addSearchBox('Pesquisar repertório...',filterCards);
+  const repGroups=new Map();
+  for(const s of scalesCache){
+    if(!s.repertorioId)continue;
+    const r=repById(s.repertorioId);if(!r)continue;
+    const singer=scaleSingerName(s);
+    const e=nextEncounterOfScale(s)||latestEncounterOfScale(s);
+    const key=s.cantorId||singer;
+    if(!repGroups.has(key))repGroups.set(key,{singer,items:[]});
+    repGroups.get(key).items.push({r,s,e});
+  }
+  if(repGroups.size){
+    sectionSpecial.insertAdjacentHTML('beforeend',`<div class="rep-folders"><h3>Por cantor</h3>${[...repGroups.values()].sort((a,b)=>a.singer.localeCompare(b.singer)).map(g=>`<details class="rep-singer-folder"><summary>🎤 ${escapeHtml(g.singer)} <span>${g.items.length}</span></summary>${g.items.sort((a,b)=>(b.e?.data||'').localeCompare(a.e?.data||'')).map(x=>`<button class="rep-derived-link" data-rep="${escapeAttr(x.r.id)}">📅 ${escapeHtml(dateBR(x.e?.data||x.r.data||''))} • ${escapeHtml(x.s.evento||x.r.nome||'Repertório')}</button>`).join('')}</details>`).join('')}</div>`);
+    sectionSpecial.querySelectorAll('.rep-derived-link').forEach(b=>b.onclick=()=>openRepertoireDetail(b.dataset.rep,'repertorio'));
+  }
   listEl.innerHTML='';if(!repertoiresCache.length){listEl.innerHTML='<div class="empty">Nenhum repertório cadastrado.</div>';return;}
   repertoiresCache.sort((a,b)=>(b.data||'').localeCompare(a.data||''));
-  for(const r of repertoiresCache){const card=document.createElement('div');card.className='item-card';const count=(r.musicaItens||legacyRepItems(r)).length;card.innerHTML=`<h3>🎵 ${escapeHtml(r.nome||'Repertório')}</h3><div class="item-meta">${dateBR(r.data)}</div><div class="item-meta">${count} música${count===1?'':'s'}</div><div class="item-actions"><button class="confirm-btn open-rep">Abrir repertório</button>${allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':''}</div>`;card.querySelector('.open-rep').onclick=()=>openRepertoireDetail(r.id,'repertorio');if(allowed){card.querySelector('.edit-btn').onclick=()=>renderRepertoires(r);card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir repertório?')){await deleteDoc(doc(db,'repertorios',r.id));await refreshCaches();renderRepertoires();}};}listEl.appendChild(card);}
+  for(const r of repertoiresCache){const card=document.createElement('div');card.className='item-card';const count=(r.musicaItens||legacyRepItems(r)).length;card.innerHTML=`<h3>🎵 ${escapeHtml(r.nome||'Repertório')}</h3><div class="item-meta">${dateBR(r.data)}</div><div class="item-meta">${count} música${count===1?'':'s'}</div><div class="item-actions"><button class="confirm-btn open-rep">Abrir repertório</button>${allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':''}</div>`;card.querySelector('.open-rep').onclick=()=>openRepertoireDetail(r.id,'repertorio');if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderRepertoires(r);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir repertório?')){await deleteDoc(doc(db,'repertorios',r.id));await refreshCaches();renderRepertoires();}};}listEl.appendChild(card);}
 }
 function legacyRepItems(r){return (r.musicaIds||[]).map((id,i)=>{const s=songById(id)||{};return {musicaId:id,cantorId:'',cantorNome:'',tom:s.tomOriginal||s.tom||'',cifraLink:s.cifraLink||'',ouvirLink:s.ouvirLink||s.link||'',multitrackLink:s.multitrackLink||'',ordem:i+1};});}
 function wireRepSelector(existing=[]){
@@ -379,11 +408,7 @@ function scaleEncounters(s={}){
 function scaleParticipants(s={}){return [...new Set(scaleEncounters(s).flatMap(e=>e.integranteIds||[]))];}
 function principalEncounter(s={}){const es=scaleEncounters(s);return es.find(e=>e.principal)||es.slice().sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).at(-1)||null;}
 function encounterDateTime(e={}){return (e.data||'')+'T'+(e.horario||'23:59');}
-function encounterEndMs(e={}){if(!e.data)return Infinity;const d=new Date(`${e.data}T${e.horario||'23:59'}:59`);const ms=d.getTime();return Number.isFinite(ms)?ms:Infinity;}
-function encounterFinished(e={},now=new Date()){return encounterEndMs(e)<now.getTime();}
-function scaleFinished(s={},now=new Date()){const es=scaleEncounters(s).filter(e=>e.data);return es.length>0&&es.every(e=>encounterFinished(e,now));}
-function nextActiveEncounter(s={},now=new Date(),onlyUser=false){return scaleEncounters(s).filter(e=>e.data&&!encounterFinished(e,now)&&(!onlyUser||canManage('escalas')||(e.integranteIds||[]).includes(currentUser?.uid))).sort((a,b)=>encounterEndMs(a)-encounterEndMs(b))[0]||null;}
-function nextEncounterOfScale(s={},today=dateKey(new Date())){return nextActiveEncounter(s,new Date(),false);}
+function nextEncounterOfScale(s={},today=dateKey(new Date())){return scaleEncounters(s).filter(e=>e.data&&e.data>=today).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)))[0]||null;}
 function latestEncounterOfScale(s={}){return scaleEncounters(s).filter(e=>e.data).sort((a,b)=>encounterDateTime(b).localeCompare(encounterDateTime(a)))[0]||null;}
 function scaleSingerName(s={}){return s.cantorNome||userName(s.cantorId)||'Cantor não informado';}
 function scrollToAdminForm(){setTimeout(()=>adminPanel?.scrollIntoView({behavior:'smooth',block:'start'}),80);}
@@ -405,7 +430,7 @@ function collectEncounters(){
 }
 function validateEncounters(es){
   if(!es.length)return 'Adicione pelo menos um encontro.';
-  for(const e of es){if(!e.nome||!e.data)return 'Informe o nome e a data de todos os encontros.';const end=e.data+'T'+(e.horario||'23:59');for(const a of e.alertas||[]){if((a.data+'T'+a.hora)>=end)return `O alerta de “${e.nome}” precisa ser antes do encontro.`;if(new Date(a.data+'T'+a.hora)<=new Date())return `O alerta de “${e.nome}” está em uma data/horário que já passou.`;}}
+  for(const e of es){if(!e.nome||!e.data)return 'Informe o nome e a data de todos os encontros.';const end=e.data+'T'+(e.horario||'23:59');for(const a of e.alertas||[]){if((a.data+'T'+a.hora)>=end)return `O alerta de “${e.nome}” precisa ser antes do encontro.`;if(new Date(`${a.data}T${a.hora}:00`).getTime()<=Date.now())return `O alerta de “${e.nome}” está em uma data/horário que já passou.`;}}
   if(!es.some(e=>e.principal))es[es.length-1].principal=true;return '';
 }
 async function renderScales(editItem=null){
@@ -417,24 +442,19 @@ async function renderScales(editItem=null){
     const es=scaleEncounters(d);if(es.length)es.forEach(addEncounterRow);else addEncounterRow({nome:'Culto / Evento',principal:true});saveBtn.onclick=saveScale;if(editItem)scrollToAdminForm();
   }
   addSearchBox('Pesquisar cantor, escala, encontro ou data...',filterCards);
-  const now=new Date();
-  const visible=(canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid)));
-  const atuais=visible.filter(s=>!scaleFinished(s,now)).sort((a,b)=>encounterEndMs(nextActiveEncounter(a,now,false))-encounterEndMs(nextActiveEncounter(b,now,false)));
-  const anteriores=visible.filter(s=>scaleFinished(s,now)).sort((a,b)=>encounterEndMs(latestEncounterOfScale(b))-encounterEndMs(latestEncounterOfScale(a)));
-  listEl.innerHTML='';
-  if(!atuais.length&&!anteriores.length){listEl.innerHTML=`<div class="empty">${canManage('escalas')?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}
-  for(const s of atuais)listEl.appendChild(await buildScaleCard(s));
-  if(anteriores.length){
-    const historyWrap=document.createElement('div');
-    historyWrap.className='scale-history-wrap';
-    historyWrap.innerHTML=`<button type="button" class="secondary scale-history-toggle">🕘 Mostrar escalas anteriores</button><div class="scale-history-content hide"></div>`;
-    listEl.appendChild(historyWrap);
-    const historyContent=historyWrap.querySelector('.scale-history-content');
-    const toggle=historyWrap.querySelector('.scale-history-toggle');
-    const sep=document.createElement('div');sep.className='scale-history-heading';sep.innerHTML='<h2>🕘 Escalas anteriores</h2><p class="muted">Escalas em que todos os encontros já foram concluídos.</p>';historyContent.appendChild(sep);
-    for(const s of anteriores)historyContent.appendChild(await buildScaleCard(s,{historical:true}));
-    toggle.onclick=()=>{const hidden=historyContent.classList.toggle('hide');toggle.textContent=hidden?'🕘 Mostrar escalas anteriores':'Ocultar escalas anteriores';};
-  }
+  const hoje=dateKey(new Date());
+  const baseVisible=(canManage('escalas')?scalesCache:scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid)));
+  const isPastScale=s=>{const last=latestEncounterOfScale(s);return !!last && new Date(`${last.data}T${last.horario||'23:59'}:00`).getTime()<Date.now();};
+  const pastCount=baseVisible.filter(isPastScale).length;
+  if(pastCount){sectionSpecial.insertAdjacentHTML('beforeend',`<div class="scale-history-toggle"><button id="toggle-past-scales" class="secondary">${showPastScales?'Ocultar':'Exibir'} escalas concluídas (${pastCount})</button></div>`);$('toggle-past-scales').onclick=()=>{showPastScales=!showPastScales;renderScales();};}
+  const visible=baseVisible.filter(s=>showPastScales||!isPastScale(s)).sort((a,b)=>{
+    const na=nextEncounterOfScale(a,hoje),nb=nextEncounterOfScale(b,hoje);
+    if(!!na!==!!nb)return na?-1:1;
+    if(na&&nb)return encounterDateTime(na).localeCompare(encounterDateTime(nb));
+    const la=latestEncounterOfScale(a),lb=latestEncounterOfScale(b);
+    return encounterDateTime(lb||{}).localeCompare(encounterDateTime(la||{}));
+  });
+  listEl.innerHTML='';if(!visible.length){listEl.innerHTML=`<div class="empty">${canManage('escalas')?'Nenhuma escala cadastrada.':'Você ainda não está em nenhuma escala.'}</div>`;return;}for(const s of visible)listEl.appendChild(await buildScaleCard(s));
 }
 async function saveScale(){
   const evento=$('scale-event').value.trim(),equipeResponsavel=$('scale-team').value||'mvl',cantorId=$('scale-singer').value,repertorioId=$('scale-rep').value,encontros=collectEncounters();
@@ -454,17 +474,16 @@ async function syncScaleDelete(scaleId){if(!canManage('escalas')||!scaleId)retur
 async function syncScaleConfirmation(scaleId,encontros,status=''){try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync',escalaId,encontros,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
 async function getMyConfirmation(s){const c=await getDoc(doc(db,'escalas',s.id,'confirmacoes',currentUser.uid)).catch(()=>null);return c?.exists()?c.data():{};}
 function encounterStatusHtml(st){return st==='confirmado'?'<span class="status-pill ok">Confirmado</span>':st==='nao_posso'?'<span class="status-pill no">Não poderei</span>':'<span class="status-pill">Aguardando</span>';}
-async function buildScaleCard(s,opts={}){
-  const card=document.createElement('div');card.className='item-card scale-card'+(opts.historical?' scale-historical':'');const manageScale=canManage('escalas'),rep=repById(s.repertorioId),es=scaleEncounters(s);const mine=!manageScale?await getMyConfirmation(s):{};let repHtml='';
+async function buildScaleCard(s){
+  const _last=latestEncounterOfScale(s);const _concluida=!!_last&&new Date(`${_last.data}T${_last.horario||'23:59'}:00`).getTime()<Date.now();
+  const card=document.createElement('div');card.className='item-card scale-card';const manageScale=canManage('escalas'),rep=repById(s.repertorioId),es=scaleEncounters(s);const mine=!manageScale?await getMyConfirmation(s):{};let repHtml='';
   if(rep){const itens=(rep.musicaItens||legacyRepItems(rep)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));repHtml=`<div class="scale-repertoire"><b>🎵 REPERTÓRIO</b>${itens.slice(0,8).map((it,i)=>{const song=songById(it.musicaId)||{},rr=resolvedSong(it.musicaId,s.cantorId||'',it);return `<button class="scale-song">${i+1}. ${escapeHtml(song.titulo||'Música')} <small>${escapeHtml(rr.tom||'')}</small></button>`;}).join('')}<button class="confirm-btn rep-btn">Abrir repertório completo</button></div>`;}
-  const now=new Date();const endedScale=scaleFinished(s,now);
-  const encountersHtml=es.map(e=>{const ended=encounterFinished(e,now);const st=mine.encontros?.[e.id]||(e.id==='principal'?mine.status:'');const names=(e.integranteIds||[]).map(userName);const involved=(e.integranteIds||[]).includes(currentUser.uid);return `<div class="encounter-card ${e.principal?'principal':''} ${ended?'encounter-finished':''}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${ended?'<span class="status-pill ok">✓ Concluído</span>':(!manageScale&&involved?encounterStatusHtml(st):'')}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div>${manageScale?`<div class="item-meta"><b>Participantes:</b> ${escapeHtml(names.join(', ')||'Nenhum')}</div>`:''}${!ended&&!manageScale&&involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;}).join('');
-  card.innerHTML=`<div class="scale-headline"><div><div class="scale-team-label ${scaleTeam(s)}">${teamName(scaleTeam(s))}</div><h3>🎤 ${escapeHtml(scaleSingerName(s))} ${endedScale?'<span class="status-pill ok">✓ Concluída</span>':''}</h3><div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${manageScale?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
-  card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelectorAll('.enc-yes').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'confirmado'));card.querySelectorAll('.enc-no').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'nao_posso'));card.querySelector('.edit-scale')?.addEventListener('click',()=>renderScales(s));card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
+  const encountersHtml=es.map(e=>{const st=mine.encontros?.[e.id]||(e.id==='principal'?mine.status:'');const names=(e.integranteIds||[]).map(userName);const involved=(e.integranteIds||[]).includes(currentUser.uid);return `<div class="encounter-card ${e.principal?'principal':''}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${!manageScale&&involved?encounterStatusHtml(st):''}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div>${manageScale?`<div class="item-meta"><b>Participantes:</b> ${escapeHtml(names.join(', ')||'Nenhum')}</div>`:''}${!manageScale&&involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;}).join('');
+  card.innerHTML=`<div class="scale-headline"><div><div class="scale-team-label ${scaleTeam(s)}">${teamName(scaleTeam(s))}</div><h3>🎤 ${escapeHtml(scaleSingerName(s))}</h3>${_concluida?'<span class="status-pill done">Concluída</span>':''}<div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${manageScale?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
+  card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelectorAll('.enc-yes').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'confirmado'));card.querySelectorAll('.enc-no').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'nao_posso'));card.querySelector('.edit-scale')?.addEventListener('click',()=>{renderScales(s);scrollToAdminForm();});card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
 }
 async function deleteScaleCascade(scaleId){const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();syncScaleDelete(scaleId).catch(()=>{});}
 async function setEncounterConfirmation(scale,encounterId,status){
-  const target=scaleEncounters(scale).find(e=>e.id===encounterId);if(!target||encounterFinished(target,new Date())){alert('Este encontro já foi concluído.');return;}
   let data={};try{const ref=doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid);const old=await getDoc(ref);data=old.exists()?old.data():{};const encontros={...(data.encontros||{}),[encounterId]:status};await setDoc(ref,{usuarioId:currentUser.uid,usuarioNome:currentUserData.nome||currentUser.email,encontros,atualizadoEm:serverTimestamp()},{merge:true});data.encontros=encontros;}catch(e){console.error(e);alert('Não foi possível registrar sua resposta.');return;}
   alert(status==='confirmado'?'Presença confirmada neste encontro.':'Resposta registrada neste encontro.');renderScales().catch(()=>{});syncScaleConfirmation(scale.id,data.encontros||{}).catch(()=>{});
   const enc=scaleEncounters(scale).find(e=>e.id===encounterId);const admins=adminIdsFor('escalas').filter(id=>id!==currentUser.uid);if(admins.length){const texto=`${currentUserData.nome||currentUser.email} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;createNotifications(admins,'Resposta de escala',texto,'confirmacao_escala',scale.id).catch(()=>{});enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins).catch(()=>{});}
@@ -474,26 +493,92 @@ async function setConfirmation(scale,status){const e=principalEncounter(scale);i
 async function renderNextScale(){
   if(!currentUser)return;
   await refreshCaches();
-  const now=new Date();
-  const candidates=scalesCache.map(s=>({s,e:nextActiveEncounter(s,now,true)})).filter(x=>x.e).sort((a,b)=>encounterEndMs(a.e)-encounterEndMs(b.e)).slice(0,2);
-  const el=$('next-scale-content');if(!el)return;
-  if(!candidates.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada para você.</p>';return;}
-  const cards=candidates.map(({s,e},i)=>{const dt=new Date(e.data+'T12:00:00');const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);return `<div class="next-event-mini"><small>${i===0?'Próxima escala':'Escala seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(s.evento||e.nome||'Escala')}</em></div>`;}).join('');
-  el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escala(s)</button></div>`;
+  const nowMs=Date.now();
+  const proximas=scalesCache
+    .filter(s=>scaleParticipants(s).includes(currentUser.uid))
+    .map(s=>{
+      const e=scaleEncounters(s)
+        .filter(e=>e?.data && new Date(`${e.data}T${e.horario||'23:59'}:00`).getTime()>=nowMs)
+        .sort((a,b)=>new Date(`${a.data}T${a.horario||'23:59'}:00`)-new Date(`${b.data}T${b.horario||'23:59'}:00`))[0];
+      return e?{s,e}:null;
+    })
+    .filter(Boolean)
+    .sort((a,b)=>new Date(`${a.e.data}T${a.e.horario||'23:59'}:00`)-new Date(`${b.e.data}T${b.e.horario||'23:59'}:00`))
+    .slice(0,2);
+  const el=$('next-scale-content');
+  if(!el)return;
+  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada.</p>';return;}
+  const cards=proximas.map(({s,e},i)=>{
+    const dt=new Date(`${e.data}T12:00:00`);
+    const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');
+    const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
+    const nome=e.nome||s.evento||'Culto / Evento';
+    return `<div class="next-event-mini"><small>${i===0?'Próxima escala':'Escala seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(nome)} • ${escapeHtml(scaleSingerName(s))}</em></div>`;
+  }).join('');
+  el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escalas</button></div>`;
   $('home-view-scale').onclick=()=>openSection('escalas');
 }
 async function openScaleDetail(scaleId){await refreshCaches();const s=scalesCache.find(x=>x.id===scaleId);if(!s)return;currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,s.evento||'Escala');adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';listEl.innerHTML='';listEl.appendChild(await buildScaleCard(s));$('scale-detail-back').onclick=goHome;}
 const MVL_EMOJIS=['🙏','🙌','❤️','👏','🔥','🎵','🎤','🎸','🥁','🎹','😂','😊','👍','✅','🎶','💪','🤝','🎉'];
 async function openScaleChat(scaleId){
-  await refreshCaches();const scale=scalesCache.find(s=>s.id===scaleId);if(!scale){alert('Escala não encontrada.');return;}const allowed=canManage('chats')||canManage('escalas')||scaleParticipants(scale).includes(currentUser.uid);if(!allowed){alert('Este chat é exclusivo para quem está nesta escala.');return;}currentPage='chat';pushNav('escalas');homeView.classList.add('hide');sectionView.classList.remove('hide');showSectionHeader(`Chat • ${scaleSingerName(scale)}`,`${scale.evento||'Escala'} • todos os envolvidos`);adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<button id="chat-back" class="back-inline">← Voltar para escalas</button><div id="chat-list" class="chat-list"></div><div id="emoji-panel" class="emoji-panel hide">${MVL_EMOJIS.map(e=>`<button type="button" class="emoji-choice">${e}</button>`).join('')}</div><div class="chat-compose"><button id="emoji-btn" class="emoji-btn" type="button" title="Emojis">😊</button><textarea id="chat-input" placeholder="Digite uma dúvida, sugestão ou mensagem..."></textarea><button id="chat-send" class="primary">Enviar</button></div>`;listEl.innerHTML='';$('chat-back').onclick=()=>openSection('escalas');$('chat-send').onclick=()=>sendChat(scale);$('emoji-btn').onclick=()=>$('emoji-panel').classList.toggle('hide');document.querySelectorAll('.emoji-choice').forEach(b=>b.onclick=()=>{const input=$('chat-input');input.value+=b.textContent;input.focus();});if(chatUnsub)chatUnsub();chatUnsub=onSnapshot(collection(db,'escalas',scaleId,'chat'),snap=>{const items=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>createdMs(a)-createdMs(b));const box=$('chat-list');if(!box)return;box.innerHTML=items.length?'':'<div class="empty">Nenhuma mensagem ainda. Comece a conversa.</div>';items.forEach(m=>{const own=m.autorId===currentUser.uid,u=usersCache.find(x=>x.id===m.autorId),color=u?.chatColor||'#9b2b2b',node=document.createElement('div');node.className=`chat-message ${own?'mine':''}`;node.style.setProperty('--chat-color',color);node.innerHTML=`<b style="color:${escapeAttr(color)}">${escapeHtml(m.autorNome||'Integrante')}</b><div>${escapeHtml(m.mensagem||'')}</div><small>${escapeHtml(fmtTs(m.criadoEm))}</small>${canManage('chats')?'<button class="chat-delete" title="Excluir mensagem">🗑️ Excluir</button>':''}`;node.querySelector('.chat-delete')?.addEventListener('click',async()=>{if(confirm('Excluir esta mensagem do chat?'))await deleteDoc(doc(db,'escalas',scaleId,'chat',m.id));});box.appendChild(node);});box.scrollTop=box.scrollHeight;},e=>console.error('chat',e));
+  await refreshCaches();const scale=scalesCache.find(s=>s.id===scaleId);if(!scale){alert('Escala não encontrada.');return;}const allowed=canManage('chats')||canManage('escalas')||scaleParticipants(scale).includes(currentUser.uid);if(!allowed){alert('Este chat é exclusivo para quem está nesta escala.');return;}currentPage='chat';pushNav('escalas');homeView.classList.add('hide');sectionView.classList.remove('hide');sectionView.classList.add('chat-fullscreen');showSectionHeader(`Chat • ${scaleSingerName(scale)}`,`${scale.evento||'Escala'} • todos os envolvidos`);adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<button id="chat-back" class="back-inline">← Voltar para escalas</button><div id="chat-list" class="chat-list"></div><div id="emoji-panel" class="emoji-panel hide">${MVL_EMOJIS.map(e=>`<button type="button" class="emoji-choice">${e}</button>`).join('')}</div><div class="chat-compose"><button id="emoji-btn" class="emoji-btn" type="button" title="Emojis">😊</button><textarea id="chat-input" placeholder="Digite uma dúvida, sugestão ou mensagem..."></textarea><button id="chat-send" class="primary">Enviar</button></div>`;listEl.innerHTML='';$('chat-back').onclick=()=>{sectionView.classList.remove('chat-fullscreen');openSection('escalas');};$('chat-send').onclick=()=>sendChat(scale);$('emoji-btn').onclick=()=>$('emoji-panel').classList.toggle('hide');document.querySelectorAll('.emoji-choice').forEach(b=>b.onclick=()=>{const input=$('chat-input');input.value+=b.textContent;input.focus();});if(chatUnsub)chatUnsub();chatUnsub=onSnapshot(collection(db,'escalas',scaleId,'chat'),snap=>{const items=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>createdMs(a)-createdMs(b));const box=$('chat-list');if(!box)return;box.innerHTML=items.length?'':'<div class="empty">Nenhuma mensagem ainda. Comece a conversa.</div>';items.forEach(m=>{const own=m.autorId===currentUser.uid,u=usersCache.find(x=>x.id===m.autorId),color=u?.chatColor||'#9b2b2b',node=document.createElement('div');node.className=`chat-message ${own?'mine':''}`;node.style.setProperty('--chat-color',color);node.innerHTML=`<b style="color:${escapeAttr(color)}">${escapeHtml(m.autorNome||'Integrante')}</b><div>${escapeHtml(m.mensagem||'')}</div><small>${escapeHtml(fmtTs(m.criadoEm))}</small>${canManage('chats')?'<button class="chat-delete" title="Excluir mensagem">🗑️ Excluir</button>':''}`;node.querySelector('.chat-delete')?.addEventListener('click',async()=>{if(confirm('Excluir esta mensagem do chat?'))await deleteDoc(doc(db,'escalas',scaleId,'chat',m.id));});box.appendChild(node);});box.scrollTop=box.scrollHeight;},e=>console.error('chat',e));
 }
 async function sendChat(scale){const input=$('chat-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';try{await addDoc(collection(db,'escalas',scale.id,'chat'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()});const recipients=[...scaleParticipants(scale),...adminIdsFor('chats')].filter((v,i,a)=>v!==currentUser.uid&&a.indexOf(v)===i);if(recipients.length){createNotifications(recipients,`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,'chat_escala',scale.id).catch(()=>{});enviarPushMVL('chat_escala',`Chat • ${scaleSingerName(scale)}`,`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,recipients,`https://robertjuniorrj85-ux.github.io/App-MVL/?open=scalechat&id=${encodeURIComponent(scale.id)}`).catch(()=>{});}}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
+
+
+// CENTRAL DE CONVERSAS - V11.0.0
+async function renderConversations(){
+  showSectionHeader('Conversas','Chat Geral, conversas privadas, grupos e chats das escalas.');
+  adminPanel.classList.add('hide');
+  await refreshCaches();
+  let convs=await safeDocs('conversas');
+  convs=convs.filter(c=>(c.participanteIds||[]).includes(currentUser.uid)||canManage('chats')).sort(byCreatedDesc);
+  sectionSpecial.innerHTML=`${isPrincipalAdmin||canManage('chats')?'<button id="new-conversation" class="primary">+ Nova conversa</button>':''}<div class="conversation-list" id="conversation-list"></div>`;
+  const host=$('conversation-list');
+  const scaleRows=scalesCache.filter(s=>scaleParticipants(s).includes(currentUser.uid)||canManage('chats')).map(s=>({kind:'scale',id:s.id,nome:`${scaleSingerName(s)} • ${s.evento||'Escala'}`,sub:'Chat da escala'}));
+  const rows=[...convs.map(c=>({kind:'conversation',...c})),...scaleRows];
+  if(!rows.length)host.innerHTML='<div class="empty">Nenhuma conversa disponível.</div>';
+  for(const c of rows){
+    const b=document.createElement('button');b.className='conversation-row';
+    const avatar=c.kind==='scale'?'🎤':(c.tipo==='privado'?'👤':'💬');
+    b.innerHTML=`<span class="conversation-avatar">${avatar}</span><span class="conversation-main"><b>${escapeHtml(c.nome||'Conversa')}</b><small>${escapeHtml(c.ultimaMensagem||c.sub||'Toque para abrir')}</small></span>${c.naoLidas?.[currentUser.uid]?`<span class="conversation-unread">${Number(c.naoLidas[currentUser.uid])}</span>`:''}`;
+    b.onclick=()=>c.kind==='scale'?openScaleChat(c.id):openConversation(c.id);
+    host.appendChild(b);
+  }
+  $('new-conversation')?.addEventListener('click',openConversationCreator);
+}
+function openConversationCreator(){
+  const admins=isPrincipalAdmin||canManage('chats');if(!admins)return;
+  const memberRows=usersCache.map(u=>`<label class="multi-item"><input class="conv-member" type="checkbox" value="${u.id}"> ${memberAvatarHtml(u,'member-avatar')} <span>${escapeHtml(u.nome||u.email||u.id)}</span>${teamBadges(u)}</label>`).join('');
+  sectionSpecial.innerHTML=`<button id="conv-create-back" class="back-inline">← Voltar</button><div class="admin-panel"><h3>Nova conversa</h3><div class="form-grid"><input id="conv-name" placeholder="Nome da conversa"><select id="conv-scope"><option value="mvl">Somente MVL</option><option value="nova_geracao">Somente Nova Geração</option><option value="personalizado">Personalizado</option></select><div id="conv-members" class="multi-list">${memberRows}</div></div><div class="form-actions"><button id="conv-save" class="primary">Criar conversa</button></div></div>`;
+  $('conv-create-back').onclick=renderConversations;
+  const applyScope=()=>{const scope=$('conv-scope').value;document.querySelectorAll('.conv-member').forEach(ch=>{const u=usersCache.find(x=>x.id===ch.value);ch.checked=scope==='personalizado'?ch.checked:hasTeam(u,scope);ch.disabled=scope!=='personalizado';});};
+  $('conv-scope').onchange=applyScope;applyScope();
+  $('conv-save').onclick=async()=>{
+    const nome=$('conv-name').value.trim(),scope=$('conv-scope').value,ids=[...document.querySelectorAll('.conv-member:checked')].map(x=>x.value);
+    if(!nome||!ids.length){alert('Informe o nome e selecione os participantes.');return;}
+    if(!ids.includes(currentUser.uid))ids.push(currentUser.uid);
+    await addDoc(collection(db,'conversas'),{nome,tipo:'grupo',escopo:scope,participanteIds:[...new Set(ids)],adminIds:[currentUser.uid],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+    renderConversations();
+  };
+}
+async function openConversation(id){
+  const snap=await getDoc(doc(db,'conversas',id));if(!snap.exists()){alert('Conversa não encontrada.');return;}
+  const c={id,...snap.data()};if(!(c.participanteIds||[]).includes(currentUser.uid)&&!canManage('chats')){alert('Você não participa desta conversa.');return;}
+  currentPage='conversas';homeView.classList.add('hide');sectionView.classList.remove('hide');sectionView.classList.add('chat-fullscreen');
+  showSectionHeader(c.nome||'Conversa','Central de Conversas');adminPanel.classList.add('hide');listEl.innerHTML='';
+  sectionSpecial.innerHTML=`<button id="conversation-back" class="back-inline">← Conversas</button><div id="conversation-chat-list" class="chat-list"></div><div class="chat-compose"><textarea id="conversation-input" placeholder="Digite sua mensagem..."></textarea><button id="conversation-send" class="primary">Enviar</button></div>`;
+  $('conversation-back').onclick=()=>{sectionView.classList.remove('chat-fullscreen');renderConversations();};
+  $('conversation-send').onclick=async()=>{const input=$('conversation-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';await addDoc(collection(db,'conversas',id,'mensagens'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()});await updateDoc(doc(db,'conversas',id),{ultimaMensagem:mensagem.slice(0,120),ultimaMensagemPor:currentUser.uid,atualizadoEm:serverTimestamp()});const recipients=(c.participanteIds||[]).filter(x=>x!==currentUser.uid);if(recipients.length){createNotifications(recipients,c.nome||'Nova mensagem',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,'conversa',id).catch(()=>{});enviarPushMVL('chat_geral',c.nome||'Nova mensagem',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`,recipients,`https://robertjuniorrj85-ux.github.io/App-MVL/?open=conversas&id=${encodeURIComponent(id)}`).catch(()=>{});}};
+  if(chatUnsub)chatUnsub();
+  chatUnsub=onSnapshot(collection(db,'conversas',id,'mensagens'),qs=>{const items=qs.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>createdMs(a)-createdMs(b));const box=$('conversation-chat-list');if(!box)return;box.innerHTML=items.length?'':'<div class="empty">Nenhuma mensagem ainda.</div>';for(const m of items){const own=m.autorId===currentUser.uid,u=usersCache.find(x=>x.id===m.autorId),node=document.createElement('div');node.className=`chat-message ${own?'mine':''}`;node.innerHTML=`<div class="chat-author">${memberAvatarHtml(u||{},'chat-avatar')}<b>${escapeHtml(m.autorNome||userName(m.autorId))}</b></div><div>${escapeHtml(m.mensagem||'')}</div><small>${escapeHtml(fmtTs(m.criadoEm))}</small>${canManage('chats')||own?'<button class="chat-delete">🗑️ Excluir</button>':''}`;node.querySelector('.chat-delete')?.addEventListener('click',async()=>{if(confirm('Excluir esta mensagem?'))await deleteDoc(doc(db,'conversas',id,'mensagens',m.id));});box.appendChild(node);}box.scrollTop=box.scrollHeight;});
+}
 
 // AGENDA
 async function renderAgenda(editItem=null){
   showSectionHeader('Agenda','Cultos, ensaios, reuniões e eventos.');agendasCache=await safeDocs('agenda');usersCache=await safeDocs('usuarios');const allowed=canManage('agenda');adminPanel.classList.toggle('hide',!allowed);
   if(allowed){$('form-title').textContent=editItem?'Editar evento':'Novo evento';editingId=editItem?.id||null;cancelEditBtn.classList.toggle('hide',!editItem);saveBtn.textContent=editItem?'Atualizar':'Salvar';const d=editItem||{};dynamicForm.innerHTML=`<div class="form-grid"><input id="ag-date" type="date" value="${escapeAttr(d.data||'')}"><input id="ag-time" type="time" value="${escapeAttr(d.horario||'')}"><input id="ag-title" placeholder="Evento" value="${escapeAttr(d.titulo||'')}"><input id="ag-local" placeholder="Local" value="${escapeAttr(d.local||'')}"><textarea id="ag-note" placeholder="Observações">${escapeHtml(d.observacoes||'')}</textarea><select id="ag-target"><option value="todos" ${d.todos!==false?'selected':''}>Todos os integrantes</option><option value="especificos" ${d.todos===false?'selected':''}>Selecionar pessoas</option></select><div id="ag-member-box" class="multi-list ${d.todos===false?'':'hide'}">${usersCache.map(u=>`<label class="multi-item"><input type="checkbox" value="${u.id}" ${(d.destinatarios||[]).includes(u.id)?'checked':''}> ${memberIcon(u)} ${escapeHtml(u.nome||u.email||u.id)}</label>`).join('')}</div><label class="checkbox-row"><input id="ag-notify" type="checkbox" ${editItem?'':'checked'}><span><b>Notificar no MVL</b><br><small class="muted">Cria avisos internos para os destinatários.</small></span></label></div>`;$('ag-target').onchange=()=>$('ag-member-box').classList.toggle('hide',$('ag-target').value!=='especificos');saveBtn.onclick=saveAgenda;}
-  const visible=agendasCache.filter(a=>canManage('agenda')||a.todos===true||(a.destinatarios||[]).includes(currentUser.uid)).sort((a,b)=>(b.data+(b.horario||'')).localeCompare(a.data+(a.horario||'')));listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhum evento cadastrado.</div>';return;}visible.forEach(a=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<h3>${escapeHtml(a.titulo||'Evento')}</h3><div class="item-meta">${dateBR(a.data)} ${escapeHtml(a.horario||'')}</div>${a.local?`<div class="item-meta">📍 ${escapeHtml(a.local)}</div>`:''}${a.observacoes?`<div class="item-meta">${escapeHtml(a.observacoes)}</div>`:''}${allowed?'<div class="item-actions"><button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button></div>':''}`;if(allowed){card.querySelector('.edit-btn').onclick=()=>renderAgenda(a);card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir evento?')){await deleteDoc(doc(db,'agenda',a.id));renderAgenda();}};}listEl.appendChild(card);});
+  const visible=agendasCache.filter(a=>canManage('agenda')||a.todos===true||(a.destinatarios||[]).includes(currentUser.uid)).sort((a,b)=>(b.data+(b.horario||'')).localeCompare(a.data+(a.horario||'')));listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhum evento cadastrado.</div>';return;}visible.forEach(a=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<h3>${escapeHtml(a.titulo||'Evento')}</h3><div class="item-meta">${dateBR(a.data)} ${escapeHtml(a.horario||'')}</div>${a.local?`<div class="item-meta">📍 ${escapeHtml(a.local)}</div>`:''}${a.observacoes?`<div class="item-meta">${escapeHtml(a.observacoes)}</div>`:''}${allowed?'<div class="item-actions"><button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button></div>':''}`;if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderAgenda(a);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir evento?')){await deleteDoc(doc(db,'agenda',a.id));renderAgenda();}};}listEl.appendChild(card);});
 }
 async function saveAgenda(){
   const data=$('ag-date').value,horario=$('ag-time').value,titulo=$('ag-title').value.trim(),local=$('ag-local').value.trim(),observacoes=$('ag-note').value.trim(),todos=$('ag-target').value==='todos',destinatarios=todos?usersCache.map(u=>u.id):[...document.querySelectorAll('#ag-member-box input:checked')].map(x=>x.value);if(!data||!titulo){alert('Informe a data e o evento.');return;}const payload={data,horario,titulo,local,observacoes,todos,destinatarios:todos?[]:destinatarios};let refId=editingId;saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'agenda',editingId),{...payload,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});else{const ref=await addDoc(collection(db,'agenda'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});refId=ref.id;}if($('ag-notify').checked&&destinatarios.length)await createNotifications(destinatarios,'Agenda MVL',`${titulo} — ${dateBR(data)}${horario?' às '+horario:''}.`,'agenda',refId);editingId=null;await refreshCaches();renderAgenda();}catch(e){console.error(e);alert('Não foi possível salvar o evento.');}finally{saveBtn.disabled=false;}
@@ -523,10 +608,25 @@ function bindNotifications(){
 }
 function maybeBrowserNotify(n){if(!('Notification'in window)||Notification.permission!=='granted')return;try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}}
 async function requestNotifications(){
-  try{const os=window.MVLOneSignal;if(!os){alert('O OneSignal ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}os.login(currentUser.uid);await os.Notifications.requestPermission();await os.User.PushSubscription.optIn();let synced=await syncOneSignalSubscription(true);if(!synced){await new Promise(r=>setTimeout(r,1500));synced=await syncOneSignalSubscription(true);}const ok=os.Notifications.permission&&os.User.PushSubscription.optedIn&&synced;if(ok)alert('Notificações do dispositivo ativadas e registradas.');else if(os.Notifications.permission&&os.User.PushSubscription.optedIn)alert('A permissão foi concedida, mas o aparelho ainda não concluiu o registro. Feche e abra o MVL e tente novamente.');else alert('A permissão não foi concedida. Verifique as permissões do navegador.');}catch(e){console.error('OneSignal permission',e);alert('Não foi possível ativar as notificações neste aparelho.');}
+  try{
+    const os=window.MVLOneSignal;
+    if(!os){alert('O serviço de notificações ainda está carregando. Aguarde alguns segundos e tente novamente.');return;}
+    if(!os.Notifications.isPushSupported()){alert('Este navegador não oferece suporte a Web Push.');return;}
+    await os.login(currentUser.uid);
+    await os.Notifications.requestPermission();
+    if(!os.Notifications.permission){alert('A permissão não foi concedida. Verifique as permissões do navegador.');return;}
+    await os.User.PushSubscription.optIn();
+    bindOneSignalSubscriptionChanges();
+    const registered=await syncOneSignalSubscription({waitMs:12000});
+    if(registered)alert('Notificações do dispositivo ativadas e registradas.');
+    else alert('A permissão foi concedida, mas o registro deste aparelho ainda não foi confirmado. O MVL continuará tentando sincronizar automaticamente.');
+  }catch(e){
+    console.error('OneSignal permission',e);
+    alert('Não foi possível ativar as notificações neste aparelho.');
+  }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">A V9.2 já identifica cada usuário no OneSignal. O envio automático de push externo depende do emissor seguro, sem expor chave no GitHub.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.0.0: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -721,4 +821,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=10.5.0').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.0.0').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
