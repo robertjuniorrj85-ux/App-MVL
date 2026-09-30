@@ -316,3 +316,8 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .conversation-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.conversation-toolbar button{width:auto}
 .conversation-manage{margin:8px 0 12px}.conversation-manage summary{cursor:pointer;color:#ddd;font-weight:700}.conversation-manage .multi-list{max-height:280px}
 @media(max-width:620px){nav{grid-template-columns:repeat(5,minmax(0,1fr))}nav .nav-btn{font-size:17px}nav .nav-btn span{font-size:9px}.conversation-toolbar{display:grid;grid-template-columns:1fr 1fr}.conversation-toolbar button{width:100%}}
+
+/* V11.2 - navegação de novas mensagens no chat */
+.conversation-chat-wrap{position:relative}
+.new-messages-btn{position:absolute;right:14px;bottom:12px;z-index:4;border:1px solid #4a4a4a;border-radius:999px;background:#1b1b1b;color:#fff;padding:8px 12px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+.new-messages-btn:hover{background:#282828}
