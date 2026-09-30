@@ -558,7 +558,7 @@ function openConversationCreator(){
     const nome=$('conv-name').value.trim(),scope=$('conv-scope').value,ids=[...document.querySelectorAll('.conv-member:checked')].map(x=>x.value);
     if(!nome||!ids.length){alert('Informe o nome e selecione os participantes.');return;}
     if(!ids.includes(currentUser.uid))ids.push(currentUser.uid);
-    await addDoc(collection(db,'conversas'),{nome,tipo:'grupo',escopo:scope,participanteIds:[...new Set(ids)],adminIds:[currentUser.uid],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
+    await addDoc(collection(db,'conversas'),{nome,tipo:'grupo',escopo:scope,participanteIds:[...new Set(ids)],moderadorIds:[currentUser.uid],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
     renderConversations();
   };
 }
