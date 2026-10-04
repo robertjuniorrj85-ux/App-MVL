@@ -1,10 +1,11 @@
-const CACHE='mvl-v11-3-1';
+const CACHE='mvl-v11-3-2';
 const STATIC=[
-  './index.html?v=11.3.1',
-  './styles.css?v=11.3.1',
+  './index.html?v=11.3.2',
+  './styles.css?v=11.3.2',
   './app.js?v=11.3.1',
   './firebase-config.js',
   './manifest.webmanifest?v=11.3.1',
+  './outubro-rosa.png',
   './logo-mvl.jpg',
   './mvl-icon-192-v4.png',
   './mvl-icon-512-v4.png'
@@ -28,7 +29,7 @@ self.addEventListener('fetch',event=>{
     event.respondWith(fetch(event.request,{cache:'no-store'}).then(r=>{
       if(r.ok){const cp=r.clone();caches.open(CACHE).then(c=>c.put(event.request,cp));}
       return r;
-    }).catch(()=>caches.match(event.request).then(r=>r||caches.match('./index.html?v=11.3.1'))));
+    }).catch(()=>caches.match(event.request).then(r=>r||caches.match('./index.html?v=11.3.2'))));
     return;
   }
   event.respondWith(caches.match(event.request).then(cached=>cached||fetch(event.request).then(r=>{

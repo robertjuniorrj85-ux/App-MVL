@@ -525,3 +525,11 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @supports(height:100dvh){
   #section-view.chat-fullscreen{max-height:calc(100dvh - 139px)}
 }
+
+
+/* MVL V11.3.2 — selo Outubro Rosa na saudação */
+.welcome-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.welcome-title-row #saudacao{margin:0}
+.outubro-rosa-badge{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;padding:3px 8px 3px 4px;border:1px solid rgba(255,77,145,.55);border-radius:999px;background:rgba(232,36,111,.12);color:#ff78ad;font-size:.72rem;font-weight:800;line-height:1;letter-spacing:.01em;white-space:nowrap}
+.outubro-rosa-badge img{display:block;width:20px;height:25px;object-fit:contain}
+@media (max-width:430px){.welcome-title-row{gap:7px}.outubro-rosa-badge{font-size:.67rem;padding-right:7px}.outubro-rosa-badge img{width:18px;height:23px}}
