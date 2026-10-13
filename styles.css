@@ -533,3 +533,11 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .outubro-rosa-badge{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;padding:3px 8px 3px 4px;border:1px solid rgba(255,77,145,.55);border-radius:999px;background:rgba(232,36,111,.12);color:#ff78ad;font-size:.72rem;font-weight:800;line-height:1;letter-spacing:.01em;white-space:nowrap}
 .outubro-rosa-badge img{display:block;width:20px;height:25px;object-fit:contain}
 @media (max-width:430px){.welcome-title-row{gap:7px}.outubro-rosa-badge{font-size:.67rem;padding-right:7px}.outubro-rosa-badge img{width:18px;height:23px}}
+
+/* V11.4.1: confirmações visíveis aos integrantes da escala */
+.scale-confirmations{margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.13);border-radius:10px}
+.scale-confirmations>b{display:block;margin-bottom:8px}
+.scale-confirmation-member{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.08)}
+.scale-confirmation-member:last-child{border-bottom:0}
+.scale-confirmation-member>span:first-child{overflow-wrap:anywhere}
+.scale-confirmation-member .status-pill{flex-shrink:0}
