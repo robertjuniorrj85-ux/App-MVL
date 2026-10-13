@@ -55,11 +55,18 @@ const ADMIN_PERMISSION_LABELS={
   escalas:'Escalas e encontros',repertorios:'Repertórios',musicas:'Músicas',cifras:'Cifras',agenda:'Agenda',avisos:'Avisos',multitracks:'Multitracks',membros:'Membros',oracoes:'Ver/gerenciar orações',chats:'Administrar chats',comunicacao:'Comunicação privada'
 };
 
-// FIX ADM V9.6.2: alinhado às regras atuais do Firestore.
+// V11.4.0: compatibilidade com esquemas de permissões anteriores.
 function userPermissions(u={}){
-  if(u.role==='admin'&&u.adminPrincipal!==true)return (u.permissoes&&typeof u.permissoes==='object')?u.permissoes:{};
-  if(u.role==='admin_limited')return (u.adminPermissions&&typeof u.adminPermissions==='object')?u.adminPermissions:{};
-  return {};
+  // Firestore autoriza a permissão se qualquer um dos dois mapas a conceder.
+  // Mesclar evita que um mapa vazio mas existente esconda permissões legadas.
+  if(!((u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited'))return {};
+  const legacy=(u.permissoes&&typeof u.permissoes==='object')?u.permissoes:{};
+  const modern=(u.adminPermissions&&typeof u.adminPermissions==='object')?u.adminPermissions:{};
+  const merged={...legacy,...modern};
+  for(const key of new Set([...Object.keys(legacy),...Object.keys(modern)])){
+    merged[key]=legacy[key]===true||modern[key]===true;
+  }
+  return merged;
 }
 function isLimitedAdmin(){return currentUserData?.role==='admin_limited'||(currentUserData?.role==='admin'&&currentUserData?.adminPrincipal!==true);}
 function canManage(area){return isPrincipalAdmin||(isLimitedAdmin()&&userPermissions(currentUserData)?.[area]===true);}
@@ -76,7 +83,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.3.1';
+const MVL_VERSION='11.4.0';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=2*1024*1024;
 let oneSignalSyncBound=false;
@@ -594,6 +601,30 @@ async function loadConversationCache({force=false}={}){
   conversationCache=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);
   conversationCacheReady=true;conversationCacheAt=Date.now();return conversationCache;
 }
+// Ocultação individual: não exclui a conversa nem mensagens de outros participantes.
+async function hidePrivateConversationForMe(c){
+  if(c.tipo!=='privado'||!(c.participanteIds||[]).includes(currentUser.uid))return;
+  if(!confirm(`Remover a conversa com ${conversationTitle(c)} somente da sua lista? O histórico será preservado para os dois participantes.`))return;
+  try{
+    await setDoc(doc(db,'conversas',c.id,'leituras',currentUser.uid),{
+      usuarioId:currentUser.uid,ocultoEm:serverTimestamp()
+    },{merge:true});
+    conversationCacheReady=false;
+    await renderConversations();
+  }catch(e){console.error('Ocultar conversa privada',e);alert(`Não foi possível remover a conversa da sua lista${e?.code?` (${e.code})`:''}.`);}
+}
+async function privateConversationVisible(c){
+  if(c.tipo!=='privado')return true;
+  try{
+    const snap=await getDoc(doc(db,'conversas',c.id,'leituras',currentUser.uid));
+    const hidden=snap.exists()?snap.data().ocultoEm:null;
+    if(!hidden)return true;
+    const hiddenMs=hidden.toMillis?.()||hidden.seconds*1000;
+    const last=c.ultimaMensagemEm;
+    const lastMs=last?.toMillis?.()||(last?.seconds||0)*1000;
+    return lastMs>hiddenMs;
+  }catch(e){console.warn('Visibilidade da conversa',e);return true;}
+}
 async function renderConversations(){
   showSectionHeader('Chat','Chat Geral, conversas privadas, grupos e chats das escalas.');
   adminPanel.classList.add('hide');
@@ -620,13 +651,22 @@ async function renderConversations(){
     return Number.isNaN(end.getTime())||end.getTime()>=Date.now();
   };
   const scaleRows=scalesCache.filter(s=>chatScaleIsActive(s)&&(scaleParticipants(s).includes(currentUser.uid)||canManage('chats'))).map(s=>({kind:'scale',id:s.id,nome:`${scaleSingerName(s)} • ${s.evento||'Escala'}`,sub:'Chat da escala'}));
-  const rows=[...convs.map(c=>({kind:'conversation',...c})),...scaleRows];
+  const visibleConvs=(await Promise.all(convs.map(async c=>({c,visible:await privateConversationVisible(c)})))).filter(x=>x.visible).map(x=>x.c);
+  const rows=[...visibleConvs.map(c=>({kind:'conversation',...c})),...scaleRows];
   if(!rows.length)host.innerHTML='<div class="empty">Nenhuma conversa disponível.</div>';
   for(const c of rows){
     const b=document.createElement('button');b.className='conversation-row';const title=c.kind==='scale'?c.nome:conversationTitle(c);let avatar='💬';
     if(c.kind==='scale')avatar='🎤';else if(c.tipo==='privado'){const other=usersCache.find(u=>(c.participanteIds||[]).includes(u.id)&&u.id!==currentUser.uid);avatar=other?memberAvatarHtml(other,'conversation-avatar-inner'):'👤';}else if(c.tipo==='geral')avatar='🌐';
     const unread=await conversationUnreadCount(c);b.innerHTML=`<span class="conversation-avatar">${avatar}</span><span class="conversation-main"><b>${escapeHtml(title)}</b><small>${escapeHtml(c.ultimaMensagem||c.sub||'Toque para abrir')}</small></span>${unread?`<span class="conversation-unread">${unread>99?'99+':unread}</span>`:''}`;
-    b.onclick=()=>c.kind==='scale'?openScaleChat(c.id):openConversation(c.id);host.appendChild(b);
+    b.onclick=()=>c.kind==='scale'?openScaleChat(c.id):openConversation(c.id);
+    if(c.tipo==='privado'&&c.kind==='conversation'){
+      const wrap=document.createElement('div');wrap.className='mvl-private-row';wrap.style.cssText='display:flex;align-items:center;gap:6px;width:100%';
+      b.style.flex='1';b.style.minWidth='0';
+      const remove=document.createElement('button');remove.type='button';remove.className='secondary';remove.textContent='🗑️';remove.title='Remover conversa somente para mim';remove.setAttribute('aria-label',`Remover conversa com ${title} somente para mim`);
+      remove.style.cssText='flex:0 0 auto;padding:10px;min-width:40px';
+      remove.onclick=()=>hidePrivateConversationForMe(c);
+      wrap.append(b,remove);host.appendChild(wrap);
+    }else host.appendChild(b);
   }
   $('new-conversation')?.addEventListener('click',openConversationCreator);$('new-private-conversation')?.addEventListener('click',openPrivateConversationCreator);
 }
@@ -640,7 +680,7 @@ function openConversationCreator(){
 function openPrivateConversationCreator(){
   const options=usersCache.filter(u=>u.id!==currentUser.uid).map(u=>`<option value="${u.id}">${escapeHtml(u.nome||u.email||u.id)}</option>`).join('');
   sectionSpecial.innerHTML=`<button id="private-back" class="back-inline">← Voltar</button><div class="admin-panel"><h3>Nova conversa privada</h3><div class="form-grid"><select id="private-user"><option value="">Selecione uma pessoa</option>${options}</select></div><div class="form-actions"><button id="private-open" class="primary">Abrir conversa</button></div></div>`;
-  $('private-back').onclick=renderConversations;$('private-open').onclick=async()=>{const other=$('private-user').value;if(!other)return alert('Selecione uma pessoa.');const ids=[currentUser.uid,other].sort(),id=`priv_${ids.join('_')}`,ref=doc(db,'conversas',id);try{const mine=await getDocs(query(collection(db,'conversas'),where('participanteIds','array-contains',currentUser.uid)));const existing=mine.docs.find(d=>{const c=d.data(),p=[...(c.participanteIds||[])].sort();return c.tipo==='privado'&&p.length===2&&p[0]===ids[0]&&p[1]===ids[1];});if(existing){await openConversation(existing.id);return;}await setDoc(ref,{nome:'Conversa privada',tipo:'privado',participanteIds:ids,moderadorIds:[],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});conversationCacheReady=false;await openConversation(id);}catch(e){console.error('Falha ao abrir conversa privada',e);alert(`Não foi possível abrir a conversa privada${e?.code?` (${e.code})`:''}.`);}};
+  $('private-back').onclick=renderConversations;$('private-open').onclick=async()=>{const other=$('private-user').value;if(!other)return alert('Selecione uma pessoa.');const ids=[currentUser.uid,other].sort(),id=`priv_${ids.join('_')}`,ref=doc(db,'conversas',id);try{const mine=await getDocs(query(collection(db,'conversas'),where('participanteIds','array-contains',currentUser.uid)));const existing=mine.docs.find(d=>{const c=d.data(),p=[...(c.participanteIds||[])].sort();return c.tipo==='privado'&&p.length===2&&p[0]===ids[0]&&p[1]===ids[1];});if(existing){await setDoc(doc(db,'conversas',existing.id,'leituras',currentUser.uid),{usuarioId:currentUser.uid,ocultoEm:null},{merge:true});conversationCacheReady=false;await openConversation(existing.id);return;}await setDoc(ref,{nome:'Conversa privada',tipo:'privado',participanteIds:ids,moderadorIds:[],criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});conversationCacheReady=false;await openConversation(id);}catch(e){console.error('Falha ao abrir conversa privada',e);alert(`Não foi possível abrir a conversa privada${e?.code?` (${e.code})`:''}.`);}};
 }
 async function renderConversationManager(c){
   if(!conversationCanModerate(c)||c.tipo==='privado')return '';
@@ -688,7 +728,7 @@ async function openConversation(id,fromPop=false){
   $('manage-conv-save')?.addEventListener('click',async()=>{const nome=$('manage-conv-name').value.trim(),ids=[...document.querySelectorAll('.manage-member:checked')].map(x=>x.value);if(!ids.includes(currentUser.uid))ids.push(currentUser.uid);const mods=[...document.querySelectorAll('.manage-mod:checked')].map(x=>x.value).filter(x=>ids.includes(x));if(!nome||!ids.length)return alert('A conversa precisa ter nome e participantes.');await updateDoc(doc(db,'conversas',id),{nome,participanteIds:[...new Set(ids)],moderadorIds:[...new Set(mods)],atualizadoEm:serverTimestamp()});openConversation(id);});
   $('manage-conv-delete')?.addEventListener('click',()=>deleteConversationCascade(c));
   const setReply=m=>{replyingTo=m;const h=$('chat-replying');h.classList.remove('hide');h.innerHTML=`<span>Respondendo a <b>${escapeHtml(m.autorNome||'Integrante')}</b>: ${escapeHtml((m.mensagem||'').slice(0,80))}</span><button type="button">✕</button>`;h.querySelector('button').onclick=()=>{replyingTo=null;h.classList.add('hide');h.innerHTML='';};$('conversation-input').focus();};
-  $('conversation-send').onclick=async()=>{const input=$('conversation-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';forceConversationBottom=true;const payload={autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()};if(replyingTo)payload.respostaA={id:replyingTo.id,autorNome:replyingTo.autorNome||'Integrante',mensagem:(replyingTo.mensagem||'').slice(0,180)};await addDoc(collection(db,'conversas',id,'mensagens'),payload);replyingTo=null;$('chat-replying').classList.add('hide');const recipients=[...new Set((c.participanteIds||[]).filter(x=>x&&x!==currentUser.uid))];
+  $('conversation-send').onclick=async()=>{const input=$('conversation-input'),mensagem=input.value.trim();if(!mensagem)return;input.value='';forceConversationBottom=true;const payload={autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,mensagem,criadoEm:serverTimestamp()};if(replyingTo)payload.respostaA={id:replyingTo.id,autorNome:replyingTo.autorNome||'Integrante',mensagem:(replyingTo.mensagem||'').slice(0,180)};try{await addDoc(collection(db,'conversas',id,'mensagens'),payload);}catch(e){console.error('Falha ao salvar mensagem',e);input.value=mensagem;alert('Não foi possível enviar a mensagem. Tente novamente.');return;}replyingTo=null;$('chat-replying').classList.add('hide');const recipients=[...new Set((c.participanteIds||[]).filter(x=>x&&x!==currentUser.uid))];
     if(recipients.length){
       const pushTitle=conversationTitle(c),pushBody=`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,120)}`;
       createNotifications(recipients,pushTitle,pushBody,'conversa',id).catch(e=>console.error('MVL: notificacao interna do chat falhou',e));
@@ -736,7 +776,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.3.1: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.0: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -887,7 +927,7 @@ function editMember(u){
     $('member-delete-user')?.addEventListener('click',async()=>{
       if(!confirm(`Excluir DEFINITIVAMENTE o usuário ${u.nome||u.email}? Esta ação remove o acesso e não pode ser desfeita.`))return;
       if(!confirm('Confirme novamente: deseja realmente excluir este usuário?'))return;
-      const st=$('member-admin-status');try{st.textContent='Excluindo usuário...';await acaoAdminUsuario('usuario_excluir',u);await deleteDoc(doc(db,'usuarios',u.id)).catch(()=>{});await refreshCaches();alert('Usuário excluído com sucesso.');await renderMembers();}catch(e){console.error(e);st.textContent=e.message||'Não foi possível excluir o usuário.';st.className='hint error';}
+      const st=$('member-admin-status');try{st.textContent='Excluindo usuário...';await acaoAdminUsuario('usuario_excluir',u);await deleteDoc(doc(db,'usuarios',u.id));await refreshCaches();alert('Usuário excluído com sucesso.');await renderMembers();}catch(e){console.error(e);st.textContent=e.message||'Não foi possível excluir o usuário.';st.className='hint error';}
     });
   }
   $('member-save').onclick=async()=>{
@@ -932,4 +972,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.3.1').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.0').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
