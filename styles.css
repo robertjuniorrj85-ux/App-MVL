@@ -541,3 +541,6 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .scale-confirmation-member:last-child{border-bottom:0}
 .scale-confirmation-member>span:first-child{overflow-wrap:anywhere}
 .scale-confirmation-member .status-pill{flex-shrink:0}
+
+/* V11.4.3: preservar quebras de linha e espaços nas mensagens enviadas. */
+.chat-message-text, .chat-reply-quote { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
