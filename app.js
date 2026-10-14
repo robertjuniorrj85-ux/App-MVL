@@ -83,7 +83,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.3';
+const MVL_VERSION='11.4.4';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=2*1024*1024;
 let oneSignalSyncBound=false;
@@ -545,34 +545,79 @@ async function setEncounterConfirmation(scale,encounterId,status){
 }
 // Compatibilidade com botões/escala antiga
 async function setConfirmation(scale,status){const e=principalEncounter(scale);if(e)return setEncounterConfirmation(scale,e.id,status);}
-async function renderNextScale(){
-  if(!currentUser)return;
-  await refreshCaches();
-  const nowMs=Date.now();
-  const proximas=scalesCache
-    .filter(s=>scaleParticipants(s).includes(currentUser.uid))
-    .map(s=>{
-      const e=scaleEncounters(s)
-        .filter(e=>e?.data && new Date(`${e.data}T${e.horario||'23:59'}:00`).getTime()>=nowMs)
-        .sort((a,b)=>new Date(`${a.data}T${a.horario||'23:59'}:00`)-new Date(`${b.data}T${b.horario||'23:59'}:00`))[0];
-      return e?{s,e}:null;
-    })
-    .filter(Boolean)
-    .sort((a,b)=>new Date(`${a.e.data}T${a.e.horario||'23:59'}:00`)-new Date(`${b.e.data}T${b.e.horario||'23:59'}:00`))
-    .slice(0,2);
-  const el=$('next-scale-content');
-  if(!el)return;
-  if(!proximas.length){el.innerHTML='<p class="muted next-empty">Nenhuma escala futura encontrada.</p>';return;}
-  const cards=proximas.map(({s,e},i)=>{
-    const dt=new Date(`${e.data}T12:00:00`);
-    const dataLonga=dt.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}).replace(/\.$/,'');
-    const dataFmt=dataLonga.charAt(0).toUpperCase()+dataLonga.slice(1);
-    const nome=e.nome||s.evento||'Culto / Evento';
-    return `<div class="next-event-mini"><small>${i===0?'Próxima escala':'Escala seguinte'}</small><strong>${escapeHtml(dataFmt)}</strong><span>${escapeHtml(e.horario||'Horário a definir')}</span><em>${escapeHtml(nome)} • ${escapeHtml(scaleSingerName(s))}</em></div>`;
-  }).join('');
-  el.innerHTML=`<div class="next-cult-content next-cult-two"><div class="next-cult-icon">📅</div><div class="next-events-grid">${cards}</div><button id="home-view-scale" class="primary next-cult-button">Ver escalas</button></div>`;
-  $('home-view-scale').onclick=()=>openSection('escalas');
+// V11.4.4 — calendário integrado à página inicial e à Agenda.
+let mvlHomeMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+let mvlAgendaMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+function mvlMonthShift(date,delta){return new Date(date.getFullYear(),date.getMonth()+delta,1);}
+function mvlCalendarEntries(){
+  const entries=[];
+  for(const s of scalesCache){for(const e of scaleEncounters(s)){
+    if(e.data&&/^\d{4}-\d{2}-\d{2}$/.test(e.data))entries.push({kind:'scale',date:e.data,scale:s,encounter:e});
+  }}
+  for(const a of agendasCache){
+    const date=String(a.data||a.dataEvento||a.dia||'').slice(0,10);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(date))entries.push({kind:'agenda',date,agenda:a});
+  }
+  return entries;
 }
+function mvlCalendarMarkup(month,mode){
+  const year=month.getFullYear(),mm=month.getMonth(),first=new Date(year,mm,1).getDay(),last=new Date(year,mm+1,0).getDate();
+  const title=month.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+  const events=mvlCalendarEntries().filter(e=>e.date.startsWith(`${year}-${String(mm+1).padStart(2,'0')}-`));
+  const byDay=new Map();for(const e of events){const d=Number(e.date.slice(8));if(!byDay.has(d))byDay.set(d,[]);byDay.get(d).push(e);}
+  let html=`<div class="mvl-cal-head"><button type="button" class="mvl-cal-prev" aria-label="Mês anterior">‹</button><strong>${escapeHtml(title.charAt(0).toUpperCase()+title.slice(1))}</strong><button type="button" class="mvl-cal-next" aria-label="Próximo mês">›</button></div><div class="mvl-cal-grid">`;
+  for(const day of ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'])html+=`<span class="mvl-cal-weekday">${day}</span>`;
+  for(let n=0;n<first;n++)html+='<span class="mvl-cal-empty"></span>';
+  for(let d=1;d<=last;d++){
+    const dayEvents=byDay.get(d)||[],scaleEvents=dayEvents.filter(x=>x.kind==='scale'),agendaEvents=dayEvents.filter(x=>x.kind==='agenda');
+    const singerIds=new Set(),singers=[];
+    for(const e of scaleEvents){const uid=e.scale.cantorId||'';const name=scaleSingerName(e.scale);const key=uid||name;if(!singerIds.has(key)){singerIds.add(key);singers.push({name,user:usersCache.find(u=>u.id===uid)||{nome:name},scaleId:e.scale.id});}}
+    html+=`<div class="mvl-cal-day ${dayEvents.length?'has-event':''}">`;
+    for(const singer of singers.slice(0,2))html+=`<button type="button" class="mvl-cal-singer" data-scale-id="${escapeAttr(singer.scaleId)}" title="Abrir escala de ${escapeAttr(singer.name)}">${memberAvatarHtml(singer.user,'mvl-cal-avatar')}<span>${escapeHtml(singer.name.split(' ')[0])}</span></button>`;
+    if(singers.length>2)html+=`<span class="mvl-cal-more">+${singers.length-2}</span>`;
+    if(agendaEvents.length)html+=`<button type="button" class="mvl-cal-agenda-marker" data-day="${d}" aria-label="${agendaEvents.length} compromisso(s) na agenda">● ${agendaEvents.length}</button>`;
+    html+=`<button type="button" class="mvl-cal-date" data-day="${d}" aria-label="Dia ${d}, ${dayEvents.length} compromisso(s)">${d}</button></div>`;
+  }
+  html+='</div><div class="mvl-cal-day-details" aria-live="polite"></div>';
+  if(mode==='home')html+='<button type="button" class="secondary mvl-cal-open-scales">Ver todas as escalas</button>';
+  return html;
+}
+function mvlBindCalendar(host,month,mode){
+  host.innerHTML=mvlCalendarMarkup(month,mode);
+  host.querySelector('.mvl-cal-prev').onclick=()=>mvlChangeCalendar(mode,-1);
+  host.querySelector('.mvl-cal-next').onclick=()=>mvlChangeCalendar(mode,1);
+  host.querySelectorAll('[data-scale-id]').forEach(btn=>btn.onclick=()=>openScaleDetail(btn.dataset.scaleId));
+  host.querySelectorAll('[data-day]').forEach(btn=>btn.onclick=()=>{
+    const day=Number(btn.dataset.day),date=`${month.getFullYear()}-${String(month.getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const events=mvlCalendarEntries().filter(e=>e.date===date);
+    const box=host.querySelector('.mvl-cal-day-details');
+    box.innerHTML=`<strong>${escapeHtml(dateBR(date))}</strong>${events.length?events.map(e=>e.kind==='scale'?`<button class="mvl-cal-detail-scale" data-id="${escapeAttr(e.scale.id)}">🎤 ${escapeHtml(scaleSingerName(e.scale))} — ${escapeHtml(e.encounter.nome||e.scale.evento||'Escala')} ${escapeHtml(e.encounter.horario||'')}</button>`:`<div class="mvl-cal-agenda-event"><b>🗓️ ${escapeHtml(e.agenda.titulo||e.agenda.nome||e.agenda.evento||'Compromisso')}</b><span>${escapeHtml(e.agenda.horario||e.agenda.hora||'')} ${escapeHtml(e.agenda.local||'')}</span><p>${escapeHtml(e.agenda.descricao||'')}</p></div>`).join(''):'<p class="muted">Nenhum compromisso nesta data.</p>'}`;
+    box.querySelectorAll('.mvl-cal-detail-scale').forEach(b=>b.onclick=()=>openScaleDetail(b.dataset.id));
+  });
+  host.querySelector('.mvl-cal-open-scales')?.addEventListener('click',()=>openSection('escalas'));
+}
+function mvlChangeCalendar(mode,delta){
+  if(mode==='home'){mvlHomeMonth=mvlMonthShift(mvlHomeMonth,delta);const el=$('next-scale-content');if(el)mvlBindCalendar(el,mvlHomeMonth,'home');}
+  else{mvlAgendaMonth=mvlMonthShift(mvlAgendaMonth,delta);const el=$('mvl-agenda-calendar');if(el)mvlBindCalendar(el,mvlAgendaMonth,'agenda');}
+}
+async function renderNextScale(){if(!currentUser)return;await refreshCaches();const el=$('next-scale-content');if(el)mvlBindCalendar(el,mvlHomeMonth,'home');}
+async function renderAgenda(editItem=null){
+  await refreshCaches();showSectionHeader('Agenda','Calendário de compromissos do ministério.');
+  const allowed=canManage('agenda');adminPanel.classList.toggle('hide',!allowed);
+  sectionSpecial.innerHTML='<div id="mvl-agenda-calendar" class="mvl-calendar mvl-calendar-agenda"></div>';
+  mvlBindCalendar($('mvl-agenda-calendar'),mvlAgendaMonth,'agenda');
+  if(allowed){$('form-title').textContent=editItem?'Editar compromisso':'Adicionar compromisso';editingId=editItem?.id||null;
+    dynamicForm.innerHTML=`<div class="form-grid"><input id="agenda-titulo" placeholder="Título" value="${escapeAttr(editItem?.titulo||editItem?.nome||'')}"><input id="agenda-data" type="date" value="${escapeAttr(editItem?.data||'')}"><input id="agenda-horario" type="time" value="${escapeAttr(editItem?.horario||editItem?.hora||'')}"><input id="agenda-local" placeholder="Local" value="${escapeAttr(editItem?.local||'')}"><textarea id="agenda-descricao" placeholder="Descrição">${escapeHtml(editItem?.descricao||'')}</textarea></div>`;
+    saveBtn.onclick=async()=>{const titulo=$('agenda-titulo').value.trim(),data=$('agenda-data').value;if(!titulo||!data){alert('Informe título e data.');return;}const payload={titulo,data,horario:$('agenda-horario').value,local:$('agenda-local').value.trim(),descricao:$('agenda-descricao').value.trim(),atualizadoEm:serverTimestamp()};saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'agenda',editingId),payload);else await addDoc(collection(db,'agenda'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});await renderAgenda();}catch(e){console.error('Agenda',e);alert('Não foi possível salvar o compromisso.');}finally{saveBtn.disabled=false;}};
+  }
+  listEl.innerHTML='';const items=agendasCache.slice().sort((a,b)=>String(a.data||'').localeCompare(String(b.data||'')));
+  if(!items.length)listEl.innerHTML='<div class="empty">Nenhum compromisso cadastrado.</div>';
+  for(const a of items){const card=document.createElement('div');card.className='item-card';card.innerHTML=`<h3>${escapeHtml(a.titulo||a.nome||a.evento||'Compromisso')}</h3><div class="item-meta">📅 ${escapeHtml(dateBR(a.data||a.dataEvento||''))} ${escapeHtml(a.horario||a.hora||'')}</div><div class="item-meta">${escapeHtml(a.local||'')}</div><p>${escapeHtml(a.descricao||'')}</p>${allowed?'<div class="item-actions"><button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button></div>':''}`;
+    if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderAgenda(a);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(!confirm('Excluir este compromisso?'))return;try{await deleteDoc(doc(db,'agenda',a.id));await renderAgenda();}catch(e){alert('Não foi possível excluir o compromisso.');}};}
+    listEl.appendChild(card);
+  }
+}
+async function renderCalendar(){return renderAgenda();}
 async function openScaleDetail(scaleId){await refreshCaches();const s=scalesCache.find(x=>x.id===scaleId);if(!s)return;currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,s.evento||'Escala');adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';listEl.innerHTML='';listEl.appendChild(await buildScaleCard(s));$('scale-detail-back').onclick=goHome;}
 const MVL_EMOJIS=['🙏','🙌','❤️','👏','🔥','🎵','🎤','🎸','🥁','🎹','😂','😊','👍','✅','🎶','💪','🤝','🎉'];
 async function openScaleChat(scaleId,fromPop=false){
@@ -757,7 +802,7 @@ async function openConversation(id,fromPop=false){
     updateDoc(doc(db,'conversas',id),{ultimaMensagem:mensagem.slice(0,120),ultimaMensagemPor:currentUser.uid,ultimaMensagemEm:serverTimestamp(),atualizadoEm:serverTimestamp()})
       .catch(e=>console.error('MVL: falha ao atualizar resumo da conversa (mensagem ja salva)',e));};
   if(chatUnsub)chatUnsub();let reactions=[];
-  const draw=async items=>{const box=$('conversation-chat-list');if(!box)return;const distanceFromBottom=box.scrollHeight-box.scrollTop-box.clientHeight;const wasNearBottom=distanceFromBottom<100;box.innerHTML=items.length?'':'<div class="empty">Nenhuma mensagem ainda. Comece a conversa.</div>';let lastDate='';for(const m of items){const d=m.criadoEm?.toDate?.(),dateLabel=d?d.toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'}):'';if(dateLabel&&dateLabel!==lastDate){const sep=document.createElement('div');sep.className='chat-date-separator';sep.textContent=dateLabel;box.appendChild(sep);lastDate=dateLabel;}const own=m.autorId===currentUser.uid,u=usersCache.find(x=>x.id===m.autorId),color=u?.chatColor||'#9b2b2b',node=document.createElement('div');node.className=`chat-message ${own?'mine':''}`;node.dataset.messageId=m.id;node.style.setProperty('--chat-color',color);const avatar=memberAvatarHtml(u||{nome:m.autorNome},'chat-avatar'),rs=reactions.filter(r=>r.mensagemId===m.id),groups={};rs.forEach(r=>groups[r.emoji]=(groups[r.emoji]||0)+1);node.innerHTML=`<div class="chat-author">${avatar}<b style="color:${escapeAttr(color)}">${escapeHtml(m.autorNome||'Integrante')}</b></div>${m.respostaA?`<div class="chat-reply-quote"><b>${escapeHtml(m.respostaA.autorNome||'')}</b><br>${escapeHtml(m.respostaA.mensagem||'')}</div>`:''}<div class="chat-message-text">${escapeHtml(m.mensagem||'')}</div><small>${escapeHtml(fmtTs(m.criadoEm))}</small>${Object.keys(groups).length?`<div class="chat-reactions">${Object.entries(groups).map(([e,n])=>`<span class="chat-reaction">${e} ${n}</span>`).join('')}</div>`:''}<div class="chat-message-actions"><button class="reply-msg">↩ Responder</button><button class="react-msg">❤️ Reagir</button>${conversationCanModerate(c)?'<button class="pin-msg">📌 Fixar</button>':''}${own||conversationCanModerate(c)?'<button class="delete-msg">🗑️ Excluir</button>':''}</div>`;node.querySelector('.reply-msg').onclick=()=>setReply(m);node.querySelector('.react-msg').onclick=async()=>{const emoji=prompt('Reação: ❤️ 🙏 🙌 👍 😂 🔥','❤️');if(!emoji)return;await setDoc(doc(db,'conversas',id,'reacoes',`${m.id}_${currentUser.uid}`),{mensagemId:m.id,usuarioId:currentUser.uid,emoji:emoji.slice(0,8),criadoEm:serverTimestamp()});};node.querySelector('.pin-msg')?.addEventListener('click',async()=>{await updateDoc(doc(db,'conversas',id),{mensagemFixada:{id:m.id,autorNome:m.autorNome||'Integrante',mensagem:(m.mensagem||'').slice(0,240)},atualizadoEm:serverTimestamp()});openConversation(id);});node.querySelector('.delete-msg')?.addEventListener('click',async()=>{if(confirm('Excluir esta mensagem?'))await deleteDoc(doc(db,'conversas',id,'mensagens',m.id));});box.appendChild(node);}const bottomAnchor=document.createElement('div');bottomAnchor.className='chat-bottom-anchor';box.appendChild(bottomAnchor);const shouldGoBottom=conversationInitialPaint||forceConversationBottom||wasNearBottom;conversationInitialPaint=false;forceConversationBottom=false;if(shouldGoBottom){scrollConversationBottom(false);$('conversation-new-messages')?.classList.add('hide');}else if(items.length){$('conversation-new-messages')?.classList.remove('hide');}markConversationRead(id);};
+  const draw=async items=>{const box=$('conversation-chat-list');if(!box)return;const distanceFromBottom=box.scrollHeight-box.scrollTop-box.clientHeight;const wasNearBottom=distanceFromBottom<100;box.innerHTML=items.length?'':'<div class="empty">Nenhuma mensagem ainda. Comece a conversa.</div>';let lastDate='';for(const m of items){const d=m.criadoEm?.toDate?.(),dateLabel=d?d.toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'}):'';if(dateLabel&&dateLabel!==lastDate){const sep=document.createElement('div');sep.className='chat-date-separator';sep.textContent=dateLabel;box.appendChild(sep);lastDate=dateLabel;}const own=m.autorId===currentUser.uid,u=usersCache.find(x=>x.id===m.autorId),color=u?.chatColor||'#9b2b2b',node=document.createElement('div');node.className=`chat-message ${own?'mine':''}`;node.dataset.messageId=m.id;node.style.setProperty('--chat-color',color);const avatar=memberAvatarHtml(u||{nome:m.autorNome},'chat-avatar'),rs=reactions.filter(r=>r.mensagemId===m.id),groups={};rs.forEach(r=>groups[r.emoji]=(groups[r.emoji]||0)+1);node.innerHTML=`<div class="chat-author">${avatar}<b style="color:${escapeAttr(color)}">${escapeHtml(m.autorNome||'Integrante')}</b></div>${m.respostaA?`<div class="chat-reply-quote"><b>${escapeHtml(m.respostaA.autorNome||'')}</b><br>${escapeHtml(m.respostaA.mensagem||'')}</div>`:''}<div class="chat-message-text">${escapeHtml(m.mensagem||'')}</div><small>${escapeHtml(fmtTs(m.criadoEm))}</small>${Object.keys(groups).length?`<div class="chat-reactions">${Object.entries(groups).map(([e,n])=>`<button type="button" class="chat-reaction mvl-reaction-detail" data-emoji="${escapeAttr(e)}" title="Ver quem reagiu">${e} ${n}</button>`).join('')}</div>`:''}<div class="chat-message-actions"><button class="reply-msg">↩ Responder</button><button class="react-msg">❤️ Reagir</button>${conversationCanModerate(c)?'<button class="pin-msg">📌 Fixar</button>':''}${own||conversationCanModerate(c)?'<button class="delete-msg">🗑️ Excluir</button>':''}</div>`;node.querySelectorAll('.mvl-reaction-detail').forEach(b=>b.onclick=()=>mvlShowReactionUsers(rs,b.dataset.emoji));node.querySelector('.reply-msg').onclick=()=>setReply(m);node.querySelector('.react-msg').onclick=async()=>{const emoji=prompt('Reação: ❤️ 🙏 🙌 👍 😂 🔥','❤️');if(!emoji)return;await setDoc(doc(db,'conversas',id,'reacoes',`${m.id}_${currentUser.uid}`),{mensagemId:m.id,usuarioId:currentUser.uid,emoji:emoji.slice(0,8),criadoEm:serverTimestamp()});};node.querySelector('.pin-msg')?.addEventListener('click',async()=>{await updateDoc(doc(db,'conversas',id),{mensagemFixada:{id:m.id,autorNome:m.autorNome||'Integrante',mensagem:(m.mensagem||'').slice(0,240)},atualizadoEm:serverTimestamp()});openConversation(id);});node.querySelector('.delete-msg')?.addEventListener('click',async()=>{if(confirm('Excluir esta mensagem?'))await deleteDoc(doc(db,'conversas',id,'mensagens',m.id));});box.appendChild(node);}const bottomAnchor=document.createElement('div');bottomAnchor.className='chat-bottom-anchor';box.appendChild(bottomAnchor);const shouldGoBottom=conversationInitialPaint||forceConversationBottom||wasNearBottom;conversationInitialPaint=false;forceConversationBottom=false;if(shouldGoBottom){scrollConversationBottom(false);$('conversation-new-messages')?.classList.add('hide');}else if(items.length){$('conversation-new-messages')?.classList.remove('hide');}markConversationRead(id);};
   let messages=[];const reactionUnsub=onSnapshot(collection(db,'conversas',id,'reacoes'),snap=>{reactions=snap.docs.map(d=>({id:d.id,...d.data()}));draw(messages);},e=>console.warn('Reações',e));const messageUnsub=onSnapshot(collection(db,'conversas',id,'mensagens'),qs=>{messages=qs.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>createdMs(a)-createdMs(b));draw(messages);},e=>console.error('Conversa',e));chatUnsub=()=>{reactionUnsub();messageUnsub();};
 }
 
@@ -765,6 +810,14 @@ async function renderCommunication(){
   showSectionHeader('Comunicação','Mensagens privadas entre integrantes e liderança.');adminPanel.classList.remove('hide');$('form-title').textContent=canManage('comunicacao')?'Nova mensagem':'Enviar mensagem à liderança';dynamicForm.innerHTML=`<div class="form-grid"><select id="msg-type"><option>Falta / ausência</option><option>Dúvida</option><option>Pedido</option><option>Observação</option><option>Outro</option></select><textarea id="msg-body" placeholder="Escreva sua mensagem"></textarea></div>`;saveBtn.onclick=sendMessage;await loadMessages();
 }
 async function sendMessage(){const tipo=$('msg-type').value,mensagem=$('msg-body').value.trim();if(!mensagem){alert('Escreva a mensagem.');return;}try{await addDoc(collection(db,'mensagens'),{autorId:currentUser.uid,autorNome:currentUserData.nome||currentUser.email,autorEmail:currentUser.email,tipo,mensagem,status:'nova',criadoEm:serverTimestamp()});if(!canManage('comunicacao')){const admins=adminIdsFor('comunicacao');if(admins.length){createNotifications(admins,'Nova mensagem à liderança',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,140)}`,'mensagem','').catch(()=>{});enviarPushMVL('mensagem_admin','Nova mensagem no MVL',`${currentUserData.nome||currentUser.email}: ${mensagem.slice(0,140)}`,admins,'https://robertjuniorrj85-ux.github.io/App-MVL/?open=comunicacao').catch(()=>{});}}$('msg-body').value='';alert('Mensagem enviada.');await loadMessages();}catch(e){console.error(e);alert('Não foi possível enviar a mensagem.');}}
+function mvlShowReactionUsers(reactions,emoji){
+  document.getElementById('mvl-reactions-overlay')?.remove();
+  const filtered=reactions.filter(r=>r.emoji===emoji);
+  const overlay=document.createElement('div');overlay.id='mvl-reactions-overlay';overlay.className='mvl-reactions-overlay';
+  overlay.innerHTML=`<div class="mvl-reactions-dialog" role="dialog" aria-modal="true" aria-label="Quem reagiu"><div class="mvl-reactions-header"><strong>${escapeHtml(emoji)} Quem reagiu</strong><button type="button" class="mvl-reactions-close" aria-label="Fechar">✕</button></div>${filtered.map(r=>{const u=usersCache.find(x=>x.id===r.usuarioId)||{nome:userName(r.usuarioId)};return `<div class="mvl-reactions-person">${memberAvatarHtml(u,'mvl-reaction-avatar')}<span>${escapeHtml(u.nome||u.email||'Integrante')}</span><b>${escapeHtml(r.emoji||'')}</b></div>`;}).join('')}</div>`;
+  overlay.onclick=e=>{if(e.target===overlay||e.target.closest('.mvl-reactions-close'))overlay.remove();};
+  document.body.appendChild(overlay);overlay.querySelector('.mvl-reactions-close').focus();
+}
 async function loadMessages(){const all=await safeDocs('mensagens'),visible=(canManage('comunicacao')?all:all.filter(m=>m.autorId===currentUser.uid)).sort(byCreatedDesc);listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhuma mensagem ainda.</div>';return;}visible.forEach(m=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<span class="status-pill ${m.status==='nova'?'new':m.status==='resolvida'?'done':''}">${escapeHtml(m.status||'nova')}</span><h3>${escapeHtml(m.tipo||'Mensagem')}</h3>${canManage('comunicacao')?`<div class="item-meta"><b>De:</b> ${escapeHtml(m.autorNome||m.autorEmail||'')}</div>`:''}<div class="item-meta">${escapeHtml(m.mensagem||'')}</div>${canManage('comunicacao')?'<div class="item-actions"><button class="edit-btn">Marcar lida</button><button class="confirm-btn">Resolvida</button><button class="delete-btn msg-delete">Excluir</button></div>':''}`;if(canManage('comunicacao')){card.querySelector('.edit-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'lida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.confirm-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'resolvida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.msg-delete').onclick=async()=>{if(confirm('Excluir esta mensagem privada?')){await deleteDoc(doc(db,'mensagens',m.id));loadMessages();}};}listEl.appendChild(card);});}
 
 // NOTIFICAÇÕES INTERNAS: 1 DOCUMENTO POR DESTINATÁRIO
@@ -794,7 +847,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.3: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.4: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -990,4 +1043,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.0').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.4').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}

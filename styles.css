@@ -544,3 +544,33 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* V11.4.3: preservar quebras de linha e espaços nas mensagens enviadas. */
 .chat-message-text, .chat-reply-quote { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
+
+/* V11.4.4 — calendário no layout original do MVL */
+.mvl-cal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0 12px;color:#fff}
+.mvl-cal-head button{min-width:34px;min-height:34px;border-radius:10px;border:1px solid #6b2830;background:#251317;color:#fff;font-size:23px}
+.mvl-cal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;width:100%}
+.mvl-cal-weekday{text-align:center;color:#c4b6b9;font-size:10px;padding:4px 0}
+.mvl-cal-day{min-width:0;min-height:82px;border:1px solid #3b292c;border-radius:8px;background:#181619;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding:3px 1px;gap:2px}
+.mvl-cal-day.has-event{background:#31191e;border-color:#75303b}
+.mvl-cal-date{width:100%;min-height:22px;background:transparent;border:0;color:#fff;font-weight:600;font-size:12px;padding:0}
+.mvl-cal-singer{border:1px solid #7f3d48;border-radius:8px;background:#4c202b;color:#fff;display:flex;flex-direction:column;align-items:center;gap:2px;width:100%;padding:3px 0;min-width:0;cursor:pointer}
+.mvl-cal-singer span:last-child{font-size:9px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mvl-cal-avatar{width:27px;height:27px;border-radius:50%;object-fit:cover;display:flex;align-items:center;justify-content:center;background:#7d3341;color:#fff;font-size:12px}
+.mvl-cal-more,.mvl-cal-agenda-marker{font-size:9px;color:#ffd7dd}
+.mvl-cal-agenda-marker{border:0;background:transparent;cursor:pointer}
+.mvl-cal-day-details{margin-top:12px;color:#eee;display:grid;gap:8px}
+.mvl-cal-day-details:empty{display:none}
+.mvl-cal-detail-scale{width:100%;text-align:left;padding:10px;border-radius:9px;background:#361b22;color:#fff;border:1px solid #73303a}
+.mvl-cal-agenda-event{background:#242126;padding:10px;border-radius:9px;display:grid;gap:4px;color:#fff}
+.mvl-cal-agenda-event span,.mvl-cal-agenda-event p{color:#c7bfc1;margin:0}
+.mvl-cal-open-scales{width:100%;margin-top:12px}
+.mvl-calendar-agenda{border:1px solid #4a292e;border-radius:14px;background:#161316;padding:12px;margin-bottom:18px}
+.chat-reaction.mvl-reaction-detail{cursor:pointer;border:1px solid #713d4a;border-radius:20px;background:#32222a;color:#fff;padding:4px 9px;font:inherit}
+.mvl-reactions-overlay{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:99999;padding:18px}
+.mvl-reactions-dialog{width:min(100%,390px);max-height:70vh;overflow:auto;border-radius:16px;background:#20191d;color:#fff;border:1px solid #783b48;padding:16px}
+.mvl-reactions-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.mvl-reactions-close{background:#49252d;color:#fff;border:0;border-radius:8px;padding:8px 12px}
+.mvl-reactions-person{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #423036}
+.mvl-reactions-person span{flex:1}
+.mvl-reaction-avatar{width:36px;height:36px;border-radius:50%;object-fit:cover;display:flex;align-items:center;justify-content:center;background:#713743}
+@media(max-width:390px){.mvl-cal-day{min-height:75px}.mvl-cal-avatar{width:23px;height:23px}.mvl-cal-singer span:last-child{font-size:8px}}
