@@ -298,7 +298,7 @@ async function renderVozes(){
   adminPanel.classList.add('hide');
   const autorizado=isPrincipalAdmin||currentUserData?.acessoVozes===true;
   sectionSpecial.innerHTML=autorizado
-    ? '<div class="item-card"><h3>🎤 Divisão de Vozes</h3><p>Abra a pasta no Google Drive para estudar as vozes.</p><a id="vozes-drive-link" class="link-btn" target="_blank" rel="noopener noreferrer">📁 Abrir pasta do Google Drive</a><p class="muted">Use a conta Google autorizada para acessar os arquivos.</p></div>'
+    ? '<div class="item-card"><h3>🎤 Divisão de Vozes</h3><p>Abra a pasta no Google Drive para estudar as vozes.</p><a id="vozes-drive-link" class="link-btn" target="_blank" rel="noopener noreferrer">📁 Divisões de Vozes</a><p class="muted">Use a conta Google autorizada para acessar os arquivos.</p></div>'
     : '<div class="item-card"><h3>🔒 Acesso restrito</h3><p>Solicite autorização ao administrador principal para acessar a Divisão de Vozes.</p></div>';
   if(autorizado){const link=$('vozes-drive-link');if(link)link.href=MVL_VOZES_DRIVE;}
 }
