@@ -548,6 +548,7 @@ async function setConfirmation(scale,status){const e=principalEncounter(scale);i
 // V11.4.4 — calendário integrado à página inicial e à Agenda.
 let mvlHomeMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1);
 let mvlAgendaMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+let mvlCalendarNotices=[];
 function mvlMonthShift(date,delta){return new Date(date.getFullYear(),date.getMonth()+delta,1);}
 function mvlCalendarEntries(){
   const entries=[];
@@ -558,28 +559,45 @@ function mvlCalendarEntries(){
     const date=String(a.data||a.dataEvento||a.dia||'').slice(0,10);
     if(/^\d{4}-\d{2}-\d{2}$/.test(date))entries.push({kind:'agenda',date,agenda:a});
   }
+  // Avisos: usa a data do acontecimento quando presente; caso contrário, a publicação.
+  for(const a of mvlCalendarNotices){
+    const explicit=String(a.dataEvento||a.dataAcontecimento||a.dataAviso||a.data||'').slice(0,10);
+    const raw=a.criadoEm||a.createdAt||a.dataPublicacao;
+    const published=raw?.toDate?.()||((raw?.seconds!=null)?new Date(raw.seconds*1000):null);
+    const date=/^\d{4}-\d{2}-\d{2}$/.test(explicit)?explicit:(published?dateKey(published):'');
+    if(date)entries.push({kind:'notice',date,notice:a});
+  }
+  // Aniversários recorrentes: o ano é o do mês atualmente exibido.
+  for(const u of usersCache){
+    const match=String(u.aniversario||'').match(/^(\d{2})-(\d{2})$/);
+    if(match)entries.push({kind:'birthday',month:Number(match[1]),day:Number(match[2]),user:u});
+  }
   return entries;
 }
 function mvlCalendarMarkup(month,mode){
   const year=month.getFullYear(),mm=month.getMonth(),first=new Date(year,mm,1).getDay(),last=new Date(year,mm+1,0).getDate();
   const title=month.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
-  const events=mvlCalendarEntries().filter(e=>e.date.startsWith(`${year}-${String(mm+1).padStart(2,'0')}-`));
-  const byDay=new Map();for(const e of events){const d=Number(e.date.slice(8));if(!byDay.has(d))byDay.set(d,[]);byDay.get(d).push(e);}
+  const events=mvlCalendarEntries().filter(e=>e.kind==='birthday'?e.month===mm+1&&e.day<=last:e.date.startsWith(`${year}-${String(mm+1).padStart(2,'0')}-`));
+  const byDay=new Map();for(const e of events){const d=e.kind==='birthday'?e.day:Number(e.date.slice(8));if(!byDay.has(d))byDay.set(d,[]);byDay.get(d).push(e);}
   let html=`<div class="mvl-cal-head"><button type="button" class="mvl-cal-prev" aria-label="Mês anterior">‹</button><strong>${escapeHtml(title.charAt(0).toUpperCase()+title.slice(1))}</strong><button type="button" class="mvl-cal-next" aria-label="Próximo mês">›</button></div><div class="mvl-cal-grid">`;
   for(const day of ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'])html+=`<span class="mvl-cal-weekday">${day}</span>`;
   for(let n=0;n<first;n++)html+='<span class="mvl-cal-empty"></span>';
   for(let d=1;d<=last;d++){
-    const dayEvents=byDay.get(d)||[],scaleEvents=dayEvents.filter(x=>x.kind==='scale'),agendaEvents=dayEvents.filter(x=>x.kind==='agenda');
+    const dayEvents=byDay.get(d)||[],scaleEvents=dayEvents.filter(x=>x.kind==='scale'),agendaEvents=dayEvents.filter(x=>x.kind==='agenda'),noticeEvents=dayEvents.filter(x=>x.kind==='notice'),birthdayEvents=dayEvents.filter(x=>x.kind==='birthday');
     const singerIds=new Set(),singers=[];
     for(const e of scaleEvents){const uid=e.scale.cantorId||'';const name=scaleSingerName(e.scale);const key=uid||name;if(!singerIds.has(key)){singerIds.add(key);singers.push({name,user:usersCache.find(u=>u.id===uid)||{nome:name},scaleId:e.scale.id});}}
-    html+=`<div class="mvl-cal-day ${dayEvents.length?'has-event':''}">`;
+    const today=dateKey(new Date())===`${year}-${String(mm+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    html+=`<div class="mvl-cal-day ${dayEvents.length?'has-event':''} ${today?'mvl-cal-today':''}">`;
     for(const singer of singers.slice(0,2))html+=`<button type="button" class="mvl-cal-singer" data-scale-id="${escapeAttr(singer.scaleId)}" title="Abrir escala de ${escapeAttr(singer.name)}">${memberAvatarHtml(singer.user,'mvl-cal-avatar')}<span>${escapeHtml(singer.name.split(' ')[0])}</span></button>`;
     if(singers.length>2)html+=`<span class="mvl-cal-more">+${singers.length-2}</span>`;
     if(agendaEvents.length)html+=`<button type="button" class="mvl-cal-agenda-marker" data-day="${d}" aria-label="${agendaEvents.length} compromisso(s) na agenda">● ${agendaEvents.length}</button>`;
+    if(noticeEvents.length||birthdayEvents.length||agendaEvents.length){
+      html+=`<div class="mvl-cal-markers">${noticeEvents.length?'<span class="mvl-cal-dot mvl-cal-notice" title="Avisos"></span>':''}${agendaEvents.length?'<span class="mvl-cal-dot mvl-cal-agenda" title="Agenda"></span>':''}${birthdayEvents.length?'<span class="mvl-cal-dot mvl-cal-birthday" title="Aniversários"></span>':''}</div>`;
+    }
     html+=`<button type="button" class="mvl-cal-date" data-day="${d}" aria-label="Dia ${d}, ${dayEvents.length} compromisso(s)">${d}</button></div>`;
   }
   html+='</div><div class="mvl-cal-day-details" aria-live="polite"></div>';
-  if(mode==='home')html+='<button type="button" class="secondary mvl-cal-open-scales">Ver todas as escalas</button>';
+  if(mode==='home')html+='<div class="mvl-cal-legend"><span><i class="mvl-cal-dot mvl-cal-scale"></i> Escalas</span><span><i class="mvl-cal-dot mvl-cal-notice"></i> Avisos</span><span><i class="mvl-cal-dot mvl-cal-agenda"></i> Agenda</span><span><i class="mvl-cal-dot mvl-cal-birthday"></i> Aniversários</span></div><button type="button" class="secondary mvl-cal-open-scales">Ver todas as escalas</button>';
   return html;
 }
 function mvlBindCalendar(host,month,mode){
@@ -589,9 +607,15 @@ function mvlBindCalendar(host,month,mode){
   host.querySelectorAll('[data-scale-id]').forEach(btn=>btn.onclick=()=>openScaleDetail(btn.dataset.scaleId));
   host.querySelectorAll('[data-day]').forEach(btn=>btn.onclick=()=>{
     const day=Number(btn.dataset.day),date=`${month.getFullYear()}-${String(month.getMonth()+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
-    const events=mvlCalendarEntries().filter(e=>e.date===date);
+    const events=mvlCalendarEntries().filter(e=>e.kind==='birthday'?e.month===month.getMonth()+1&&e.day===day:e.date===date);
     const box=host.querySelector('.mvl-cal-day-details');
-    box.innerHTML=`<strong>${escapeHtml(dateBR(date))}</strong>${events.length?events.map(e=>e.kind==='scale'?`<button class="mvl-cal-detail-scale" data-id="${escapeAttr(e.scale.id)}">🎤 ${escapeHtml(scaleSingerName(e.scale))} — ${escapeHtml(e.encounter.nome||e.scale.evento||'Escala')} ${escapeHtml(e.encounter.horario||'')}</button>`:`<div class="mvl-cal-agenda-event"><b>🗓️ ${escapeHtml(e.agenda.titulo||e.agenda.nome||e.agenda.evento||'Compromisso')}</b><span>${escapeHtml(e.agenda.horario||e.agenda.hora||'')} ${escapeHtml(e.agenda.local||'')}</span><p>${escapeHtml(e.agenda.descricao||'')}</p></div>`).join(''):'<p class="muted">Nenhum compromisso nesta data.</p>'}`;
+    const details=events.map(e=>{
+      if(e.kind==='scale')return `<button class="mvl-cal-detail-scale" data-id="${escapeAttr(e.scale.id)}">🎤 ${escapeHtml(scaleSingerName(e.scale))} — ${escapeHtml(e.encounter.nome||e.scale.evento||'Escala')} ${escapeHtml(e.encounter.horario||'')}</button>`;
+      if(e.kind==='agenda')return `<div class="mvl-cal-agenda-event"><b>🗓️ ${escapeHtml(e.agenda.titulo||e.agenda.nome||e.agenda.evento||'Compromisso')}</b><span>${escapeHtml(e.agenda.horario||e.agenda.hora||'')} ${escapeHtml(e.agenda.local||'')}</span><p>${escapeHtml(e.agenda.descricao||'')}</p></div>`;
+      if(e.kind==='notice')return `<div class="mvl-cal-agenda-event mvl-cal-notice-detail"><b>📢 ${escapeHtml(e.notice.titulo||'Aviso')}</b><p>${escapeHtml(e.notice.mensagem||'')}</p></div>`;
+      return `<div class="mvl-cal-agenda-event mvl-cal-birthday-detail"><b>🎂 Aniversário de ${escapeHtml(e.user.nome||e.user.email||'Integrante')}</b><div>${memberAvatarHtml(e.user,'mvl-cal-avatar')}</div></div>`;
+    });
+    box.innerHTML=`<strong>${escapeHtml(dateBR(date))}</strong>${details.length?details.join(''):'<p class="muted">Nenhum compromisso nesta data.</p>'}`;
     box.querySelectorAll('.mvl-cal-detail-scale').forEach(b=>b.onclick=()=>openScaleDetail(b.dataset.id));
   });
   host.querySelector('.mvl-cal-open-scales')?.addEventListener('click',()=>openSection('escalas'));
@@ -600,7 +624,7 @@ function mvlChangeCalendar(mode,delta){
   if(mode==='home'){mvlHomeMonth=mvlMonthShift(mvlHomeMonth,delta);const el=$('next-scale-content');if(el)mvlBindCalendar(el,mvlHomeMonth,'home');}
   else{mvlAgendaMonth=mvlMonthShift(mvlAgendaMonth,delta);const el=$('mvl-agenda-calendar');if(el)mvlBindCalendar(el,mvlAgendaMonth,'agenda');}
 }
-async function renderNextScale(){if(!currentUser)return;await refreshCaches();const el=$('next-scale-content');if(el)mvlBindCalendar(el,mvlHomeMonth,'home');}
+async function renderNextScale(){if(!currentUser)return;await refreshCaches();try{mvlCalendarNotices=await safeDocs('avisos');}catch(e){console.warn('Avisos no calendário',e);mvlCalendarNotices=[];}const el=$('next-scale-content');if(el)mvlBindCalendar(el,mvlHomeMonth,'home');}
 async function renderAgenda(editItem=null){
   await refreshCaches();showSectionHeader('Agenda','Calendário de compromissos do ministério.');
   const allowed=canManage('agenda');adminPanel.classList.toggle('hide',!allowed);
