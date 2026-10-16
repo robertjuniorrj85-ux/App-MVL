@@ -578,9 +578,17 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* V11.4.5: exclusivamente indicadores no calendário da tela Início */
 .mvl-cal-today{outline:2px solid #fff;outline-offset:-2px}
 .mvl-cal-markers{display:flex;align-items:center;justify-content:center;gap:3px;flex-wrap:wrap;min-height:7px}
-.mvl-cal-dot{display:inline-block;flex:none;width:7px;height:7px;border-radius:50%;vertical-align:middle}
+.mvl-cal-dot{display:inline-block;flex:none;width:23px;height:4px;border-radius:999px;vertical-align:middle}
 .mvl-cal-scale{background:#d54b55}.mvl-cal-notice{background:#d9a441}.mvl-cal-agenda{background:#38a1cd}.mvl-cal-birthday{background:#4daa78}
 .mvl-cal-legend{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px;margin:12px 0 2px;font-size:11px;color:#e5dfe0}
 .mvl-cal-legend span{display:flex;align-items:center;gap:7px}
-.mvl-cal-legend .mvl-cal-dot{width:10px;height:10px}
+.mvl-cal-legend .mvl-cal-dot{width:23px;height:4px}
 .mvl-cal-notice-detail{border-left:3px solid #d9a441}.mvl-cal-birthday-detail{border-left:3px solid #4daa78}
+
+/* V11.4.5 — aniversariantes integrados somente ao calendário da tela Início. */
+.mvl-cal-birthday-person{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0;width:100%;padding:2px 0;border:1px solid #35694e;border-radius:8px;background:#163226;color:#fff;cursor:pointer}
+.mvl-cal-birthday-face{position:relative;display:inline-flex;align-items:center;justify-content:center}
+.mvl-cal-birthday-face .mvl-cal-avatar{width:29px;height:29px;border-radius:50%;object-fit:cover}
+.mvl-cal-birthday-emoji{position:absolute;right:-12px;bottom:-3px;font-size:13px;line-height:1;text-shadow:0 1px 3px #000}
+.mvl-cal-birthday-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px;line-height:1.2}
+@media(max-width:390px){.mvl-cal-birthday-face .mvl-cal-avatar{width:23px;height:23px}.mvl-cal-birthday-emoji{font-size:11px;right:-10px}.mvl-cal-birthday-name{font-size:8px}}

@@ -274,7 +274,7 @@ function updateHeaderAvatar(){const host=$('header-avatar');if(!host)return;cons
 async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id');if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='conversas'&&id)await openConversation(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
 async function openNotificationTarget(n){if(!n)return;if(n.lida!==true)await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()}).catch(()=>{});if(n.tipo==='chat_escala'&&n.refId)return openScaleChat(n.refId);if(n.tipo==='mensagem')return openSection('comunicacao');if(n.tipo==='agenda')return openSection('agenda');if(n.tipo==='confirmacao_escala'&&n.refId)return openScaleDetail(n.refId);return openSection('notificacoes');}
 function pushNav(page,detail=''){const key=detail?`${page}:${detail}`:page;if(history.state?.mvlKey===key)return;navStack.push(key);history.pushState({mvl:true,page,detail,mvlKey:key},'','#'+encodeURIComponent(key));}
-function goHome(fromPop=false){sectionView.classList.remove('chat-fullscreen');currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale().catch(e=>console.error('Próximo culto',e));renderPrayerCard().catch(e=>{console.error('Oração Home',e);const h=$('prayer-card');if(h)h.innerHTML='<p class=\"muted\">Não foi possível carregar o espaço de oração.</p>';});renderBirthdayCard().catch(e=>{console.error('Aniversariantes Home',e);const h=$('birthday-card');if(h)h.innerHTML='<p class=\"muted\">Não foi possível carregar os aniversariantes.</p>';});if(!fromPop)pushNav('inicio');}
+function goHome(fromPop=false){sectionView.classList.remove('chat-fullscreen');currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale().catch(e=>console.error('Próximo culto',e));renderPrayerCard().catch(e=>{console.error('Oração Home',e);const h=$('prayer-card');if(h)h.innerHTML='<p class=\"muted\">Não foi possível carregar o espaço de oração.</p>';});if(!fromPop)pushNav('inicio');}
 async function restoreNavState(state){const page=state?.page||'inicio',detail=state?.detail||'';if(page==='inicio')return goHome(true);if(page==='conversa'&&detail)return openConversation(detail,true);if(page==='scalechat'&&detail)return openScaleChat(detail,true);return openSection(page,true);}
 window.addEventListener('popstate',e=>{if(chatUnsub){chatUnsub();chatUnsub=null;}restoreNavState(e.state).catch(err=>console.error('Navegação voltar',err));});
 function setActiveNav(page){document.querySelectorAll('.nav-btn').forEach(b=>b.classList.toggle('active',b.dataset.page===page));}
@@ -590,6 +590,15 @@ function mvlCalendarMarkup(month,mode){
     html+=`<div class="mvl-cal-day ${dayEvents.length?'has-event':''} ${today?'mvl-cal-today':''}">`;
     for(const singer of singers.slice(0,2))html+=`<button type="button" class="mvl-cal-singer" data-scale-id="${escapeAttr(singer.scaleId)}" title="Abrir escala de ${escapeAttr(singer.name)}">${memberAvatarHtml(singer.user,'mvl-cal-avatar')}<span>${escapeHtml(singer.name.split(' ')[0])}</span></button>`;
     if(singers.length>2)html+=`<span class="mvl-cal-more">+${singers.length-2}</span>`;
+    if(mode==='home' && birthdayEvents.length){
+      for(const e of birthdayEvents.slice(0,2)){
+        const birthdayName=String(e.user.nome||e.user.email||'Integrante');
+        html+=`<button type="button" class="mvl-cal-birthday-person" data-day="${d}" title="🎂 Aniversário de ${escapeAttr(birthdayName)}">`+
+          `<span class="mvl-cal-birthday-face">${memberAvatarHtml(e.user,'mvl-cal-avatar')}<span class="mvl-cal-birthday-emoji" aria-hidden="true">🎂</span></span>`+
+          `<span class="mvl-cal-birthday-name">${escapeHtml(birthdayName.split(' ')[0])}</span></button>`;
+      }
+      if(birthdayEvents.length>2)html+=`<span class="mvl-cal-more">+${birthdayEvents.length-2} anivers.</span>`;
+    }
     if(agendaEvents.length)html+=`<button type="button" class="mvl-cal-agenda-marker" data-day="${d}" aria-label="${agendaEvents.length} compromisso(s) na agenda">● ${agendaEvents.length}</button>`;
     if(noticeEvents.length||birthdayEvents.length||agendaEvents.length){
       html+=`<div class="mvl-cal-markers">${noticeEvents.length?'<span class="mvl-cal-dot mvl-cal-notice" title="Avisos"></span>':''}${agendaEvents.length?'<span class="mvl-cal-dot mvl-cal-agenda" title="Agenda"></span>':''}${birthdayEvents.length?'<span class="mvl-cal-dot mvl-cal-birthday" title="Aniversários"></span>':''}</div>`;
