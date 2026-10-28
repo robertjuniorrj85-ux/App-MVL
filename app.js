@@ -83,33 +83,47 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.8';
+const MVL_VERSION='11.4.10';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=2*1024*1024;
 let oneSignalSyncBound=false;
+let oneSignalSyncJob=null;
+let oneSignalLastSync={uid:'',sid:'',at:0};
 
-async function syncOneSignalSubscription({waitMs=8000}={}){
-  if(!currentUser) return false;
-  const os=window.MVLOneSignal;
-  if(!os) return false;
-  try{
-    await os.login(currentUser.uid);
-    await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',mvlVersion:MVL_VERSION});
-    const started=Date.now();
-    let sid='';
-    while(Date.now()-started<waitMs){
-      sid=String(os.User?.PushSubscription?.id||'').trim();
-      if(sid) break;
-      await new Promise(r=>setTimeout(r,250));
-    }
-    if(!sid) return false;
-    const registro=await chamarBackendV10('push_subscription_sync',{subscriptionId:sid});
-    if(!registro?.ok) return false;
-    return true;
-  }catch(e){
-    console.warn('OneSignal subscription sync',e);
-    return false;
-  }
+// Revalida o vínculo do aparelho, inclusive após reconexão, sem duplicar requisições.
+async function syncOneSignalSubscription({waitMs=8000,force=false}={}){
+  if(!currentUser)return false;
+  if(oneSignalSyncJob)return oneSignalSyncJob;
+  const uid=currentUser.uid;
+  oneSignalSyncJob=(async()=>{
+    const os=window.MVLOneSignal;
+    if(!os?.User?.PushSubscription)return false;
+    try{
+      await os.login(uid);
+      if(!currentUser||currentUser.uid!==uid)return false;
+      await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',mvlVersion:MVL_VERSION});
+      const started=Date.now();
+      let sid='';
+      while(Date.now()-started<waitMs){
+        if(!currentUser||currentUser.uid!==uid)return false;
+        const push=os.User.PushSubscription;
+        if(os.Notifications?.permission===true&&push.optedIn===true){
+          sid=String(push.id||'').trim();
+          if(sid)break;
+        }
+        await new Promise(resolve=>setTimeout(resolve,300));
+      }
+      if(!sid){console.warn('MVL push: inscrição ausente ou desativada', {uid});return false;}
+      const now=Date.now();
+      if(!force&&oneSignalLastSync.uid===uid&&oneSignalLastSync.sid===sid&&now-oneSignalLastSync.at<5*60*1000)return true;
+      const registro=await chamarBackendV10('push_subscription_sync',{subscriptionId:sid});
+      if(!currentUser||currentUser.uid!==uid)return false;
+      if(registro?.ok!==true){console.warn('MVL push: backend não confirmou inscrição',registro);return false;}
+      oneSignalLastSync={uid,sid,at:Date.now()};
+      return true;
+    }catch(e){console.warn('MVL push: sincronização falhou',e);return false;}
+  })();
+  try{return await oneSignalSyncJob;}finally{oneSignalSyncJob=null;}
 }
 
 function bindOneSignalSubscriptionChanges(){
@@ -117,8 +131,19 @@ function bindOneSignalSubscriptionChanges(){
   const os=window.MVLOneSignal;
   if(!os?.User?.PushSubscription?.addEventListener)return;
   oneSignalSyncBound=true;
-  os.User.PushSubscription.addEventListener('change',()=>syncOneSignalSubscription({waitMs:10000}).catch(()=>{}));
+  os.User.PushSubscription.addEventListener('change',()=>{
+    oneSignalLastSync={uid:'',sid:'',at:0};
+    syncOneSignalSubscription({waitMs:10000,force:true}).catch(e=>console.warn('MVL push change',e));
+  });
 }
+function revalidarPushMVL(){
+  if(!currentUser||!window.MVLOneSignal||!navigator.onLine)return;
+  syncOneSignalSubscription({waitMs:4000}).catch(e=>console.warn('MVL push revalidação',e));
+}
+window.addEventListener('online',revalidarPushMVL);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')revalidarPushMVL();});
+window.addEventListener('focus',revalidarPushMVL);
+
 async function chamarBackendV10(tipo,payload={}){
   if(!currentUser)throw new Error('Usuário não autenticado.');
   const idToken=await currentUser.getIdToken(true);
@@ -203,7 +228,8 @@ entrar.addEventListener('click',async()=>{
 });
 senha.addEventListener('keydown',e=>{if(e.key==='Enter')entrar.click();});
 async function fazerLogout(){
-  try{window.MVLOneSignal?.logout();}catch{}
+  try{await window.MVLOneSignal?.logout();}catch(e){console.warn('OneSignal logout',e);}
+  oneSignalLastSync={uid:'',sid:'',at:0};
   await signOut(auth);
 }
 
@@ -264,7 +290,7 @@ function identifyOneSignal(){
       await os.User.addTags({role:isAdmin?'admin':'member',mvl:'true',mvlVersion:MVL_VERSION});
       bindOneSignalSubscriptionChanges();
       if(os.Notifications.permission && os.User.PushSubscription.optedIn){
-        await syncOneSignalSubscription({waitMs:10000});
+        await syncOneSignalSubscription({waitMs:10000,force:true});
       }
     }catch(e){console.warn('OneSignal user',e);}
   };
@@ -912,7 +938,7 @@ async function requestNotifications(){
     if(!os.Notifications.permission){alert('A permissão não foi concedida. Verifique as permissões do navegador.');return;}
     await os.User.PushSubscription.optIn();
     bindOneSignalSubscriptionChanges();
-    const registered=await syncOneSignalSubscription({waitMs:12000});
+    const registered=await syncOneSignalSubscription({waitMs:12000,force:true});
     if(registered)alert('Notificações do dispositivo ativadas e registradas.');
     else alert('A permissão foi concedida, mas o registro deste aparelho ainda não foi confirmado. O MVL continuará tentando sincronizar automaticamente.');
   }catch(e){
@@ -921,7 +947,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.8: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.10: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
