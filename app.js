@@ -819,7 +819,7 @@ async function renderConversations(){
   if(!rows.length)host.innerHTML='<div class="empty">Nenhuma conversa disponível.</div>';
   for(const c of rows){
     const b=document.createElement('button');b.className='conversation-row';const title=c.kind==='scale'?c.nome:conversationTitle(c);let avatar='💬';
-    if(c.kind==='scale')avatar='🎤';else if(c.tipo==='privado'){const other=usersCache.find(u=>(c.participanteIds||[]).includes(u.id)&&u.id!==currentUser.uid);avatar=other?memberAvatarHtml(other,'conversation-avatar-inner'):'👤';}else if(c.tipo==='geral')avatar='🌐';
+    if(c.kind==='scale'){const scale=scalesCache.find(s=>s.id===c.id);const singer=scale?.cantorId?usersCache.find(u=>u.id===scale.cantorId):null;avatar=singer?memberAvatarHtml(singer,'conversation-avatar-inner'):'🎤';}else if(c.tipo==='privado'){const other=usersCache.find(u=>(c.participanteIds||[]).includes(u.id)&&u.id!==currentUser.uid);avatar=other?memberAvatarHtml(other,'conversation-avatar-inner'):'👤';}else if(c.tipo==='geral')avatar='🌐';
     const unread=await conversationUnreadCount(c);b.innerHTML=`<span class="conversation-avatar">${avatar}</span><span class="conversation-main"><b>${escapeHtml(title)}</b><small>${escapeHtml(c.ultimaMensagem||c.sub||'Toque para abrir')}</small></span>${unread?`<span class="conversation-unread">${unread>99?'99+':unread}</span>`:''}`;
     b.onclick=()=>c.kind==='scale'?openScaleChat(c.id):openConversation(c.id);
     if(c.tipo==='privado'&&c.kind==='conversation'){
