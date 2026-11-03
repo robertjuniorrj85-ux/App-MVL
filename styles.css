@@ -527,12 +527,12 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 }
 
 
-/* MVL — selo Novembro Azul na saudação */
-.welcome-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+/* MVL — selo Novembro Azul compacto na saudação */
+.welcome-title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .welcome-title-row #saudacao{margin:0}
-.novembro-azul-badge{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;padding:3px 8px 3px 4px;border:1px solid rgba(76,166,255,.58);border-radius:999px;background:rgba(27,119,214,.16);color:#79bdff;font-size:.72rem;font-weight:800;line-height:1;letter-spacing:.01em;white-space:nowrap}
-.novembro-azul-badge img{display:block;width:20px;height:25px;object-fit:contain}
-@media (max-width:430px){.welcome-title-row{gap:7px}.novembro-azul-badge{font-size:.67rem;padding-right:7px}.novembro-azul-badge img{width:18px;height:23px}}
+.novembro-azul-badge{display:inline-flex;align-items:center;gap:4px;flex:0 0 auto;padding:2px 6px 2px 3px;border:1px solid rgba(76,166,255,.48);border-radius:999px;background:rgba(27,119,214,.12);color:#79bdff;font-size:.62rem;font-weight:700;line-height:1;letter-spacing:0;white-space:nowrap}
+.novembro-azul-badge img{display:block;width:13px;height:17px;object-fit:contain}
+@media (max-width:430px){.welcome-title-row{gap:6px}.novembro-azul-badge{font-size:.6rem;padding:2px 5px 2px 3px}.novembro-azul-badge img{width:13px;height:17px}}
 
 /* V11.4.2: confirmações visíveis aos integrantes da escala */
 .scale-confirmations{margin-top:12px;padding:12px;border:1px solid rgba(255,255,255,.13);border-radius:10px}
