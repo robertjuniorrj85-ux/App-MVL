@@ -83,7 +83,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.13';
+const MVL_VERSION='11.4.14';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -446,9 +446,23 @@ async function renderRepertoires(editItem=null){
   const archivedRepertoires=allRepertoires.filter(r=>!isRepertoireVisible(r));
   const repGroups=new Map();
   for(const r of allRepertoires){
+    const linkedSingerIds=new Set(
+      scalesCache
+        .filter(scale=>String(scale.repertorioId||'')===String(r.id)&&String(scale.cantorId||'').trim())
+        .map(scale=>String(scale.cantorId).trim())
+    );
+    if(!linkedSingerIds.size)continue;
     const items=r.musicaItens||legacyRepItems(r);const singers=new Map();
-    for(const item of items){const id=String(item.cantorId||'').trim();const name=String(item.cantorNome||(id?userName(id):'')||'').trim();if(!id&&!name)continue;const key=id||('nome:'+name.toLocaleLowerCase('pt-BR'));if(!singers.has(key))singers.set(key,{id,name:name||'Cantor não identificado'});}
-    for(const [key,singer] of singers){if(!repGroups.has(key))repGroups.set(key,{...singer,repertoires:new Map()});repGroups.get(key).repertoires.set(r.id,r);}
+    for(const item of items){
+      const id=String(item.cantorId||'').trim();
+      if(!id||!linkedSingerIds.has(id))continue;
+      const name=String(item.cantorNome||userName(id)||'').trim();
+      if(!singers.has(id))singers.set(id,{id,name:name||'Cantor não identificado'});
+    }
+    for(const [key,singer] of singers){
+      if(!repGroups.has(key))repGroups.set(key,{...singer,repertoires:new Map()});
+      repGroups.get(key).repertoires.set(r.id,r);
+    }
   }
   if(repGroups.size){
     const groups=[...repGroups.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
@@ -1279,4 +1293,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.13').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.14').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
