@@ -83,7 +83,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.11';
+const MVL_VERSION='11.4.12';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -410,6 +410,20 @@ async function saveSong(){
   saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'musicas',editingId),{...data,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});else await addDoc(collection(db,'musicas'),{...data,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});editingId=null;await refreshCaches();renderSongs();}catch(e){console.error(e);alert('Não foi possível salvar a música.');}finally{saveBtn.disabled=false;}
 }
 
+// Oculta repertórios com data anterior ao dia local atual, sem remover documentos.
+function isRepertoireVisible(r,today=dateKey(new Date())){
+  let value=r?.data;
+  if(value&&typeof value.toDate==='function')value=value.toDate();
+  let normalized='';
+  if(value instanceof Date&&!Number.isNaN(value.getTime()))normalized=dateKey(value);
+  else {
+    const raw=String(value??'').trim();
+    if(/^\d{4}-\d{2}-\d{2}/.test(raw))normalized=raw.slice(0,10);
+    else {const br=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);if(br)normalized=br[3]+'-'+br[2]+'-'+br[1];}
+  }
+  return !normalized||normalized>=today;
+}
+
 // REPERTÓRIO DETALHADO
 async function renderRepertoires(editItem=null){
   showSectionHeader('Repertório','Abra um repertório para ver músicas, cantores, tons, cifras e links.');await refreshCaches();const allowed=canManage('repertorios');adminPanel.classList.toggle('hide',!allowed);
@@ -420,10 +434,11 @@ async function renderRepertoires(editItem=null){
       <div class="subpanel"><b>Selecione as músicas</b><div class="multi-list" id="rep-song-options">${songsCache.length?songsCache.map(s=>`<label class="multi-item"><input class="rep-check" type="checkbox" value="${s.id}"> ${escapeHtml(s.titulo||'Sem título')}</label>`).join(''):'<span class="muted">Cadastre músicas primeiro.</span>'}</div><div id="rep-config-list" class="rep-config-list"></div></div>
     </div>`;wireRepSelector(d.musicaItens||legacyRepItems(d));saveBtn.onclick=saveRepertoire;}
   addSearchBox('Pesquisar repertório...',filterCards);
-  // V11.4.11: agrupamento derivado dos cantores atribuídos a cada música,
+  const visibleRepertoires=repertoiresCache.filter(r=>isRepertoireVisible(r));
+  // V11.4.12: agrupamento derivado dos cantores atribuídos a cada música,
   // sem depender do cantor global da escala e sem duplicar documentos.
   const repGroups=new Map();
-  for(const r of repertoiresCache){
+  for(const r of visibleRepertoires){
     const items=r.musicaItens||legacyRepItems(r);
     const singers=new Map();
     for(const item of items){
@@ -448,9 +463,9 @@ async function renderRepertoires(editItem=null){
     }).join('')}</div>`);
     sectionSpecial.querySelectorAll('.rep-derived-link').forEach(b=>b.onclick=()=>openRepertoireDetail(b.dataset.rep,'repertorio'));
   }
-  listEl.innerHTML='';if(!repertoiresCache.length){listEl.innerHTML='<div class="empty">Nenhum repertório cadastrado.</div>';return;}
-  repertoiresCache.sort((a,b)=>(b.data||'').localeCompare(a.data||''));
-  for(const r of repertoiresCache){const card=document.createElement('div');card.className='item-card';const count=(r.musicaItens||legacyRepItems(r)).length;card.innerHTML=`<h3>🎵 ${escapeHtml(r.nome||'Repertório')}</h3><div class="item-meta">${dateBR(r.data)}</div><div class="item-meta">${count} música${count===1?'':'s'}</div><div class="item-actions"><button class="confirm-btn open-rep">Abrir repertório</button>${allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':''}</div>`;card.querySelector('.open-rep').onclick=()=>openRepertoireDetail(r.id,'repertorio');if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderRepertoires(r);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir repertório?')){await deleteDoc(doc(db,'repertorios',r.id));await refreshCaches();renderRepertoires();}};}listEl.appendChild(card);}
+  listEl.innerHTML='';if(!visibleRepertoires.length){listEl.innerHTML='<div class="empty">Nenhum repertório cadastrado.</div>';return;}
+  visibleRepertoires.sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+  for(const r of visibleRepertoires){const card=document.createElement('div');card.className='item-card';const count=(r.musicaItens||legacyRepItems(r)).length;card.innerHTML=`<h3>🎵 ${escapeHtml(r.nome||'Repertório')}</h3><div class="item-meta">${dateBR(r.data)}</div><div class="item-meta">${count} música${count===1?'':'s'}</div><div class="item-actions"><button class="confirm-btn open-rep">Abrir repertório</button>${allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':''}</div>`;card.querySelector('.open-rep').onclick=()=>openRepertoireDetail(r.id,'repertorio');if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderRepertoires(r);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir repertório?')){await deleteDoc(doc(db,'repertorios',r.id));await refreshCaches();renderRepertoires();}};}listEl.appendChild(card);}
 }
 function legacyRepItems(r){return (r.musicaIds||[]).map((id,i)=>{const s=songById(id)||{};return {musicaId:id,cantorId:'',cantorNome:'',tom:s.tomOriginal||s.tom||'',cifraLink:s.cifraLink||'',ouvirLink:s.ouvirLink||s.link||'',multitrackLink:s.multitrackLink||'',ordem:i+1};});}
 function wireRepSelector(existing=[]){
@@ -1063,7 +1078,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.11: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.12: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -1259,4 +1274,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.11').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.12').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
