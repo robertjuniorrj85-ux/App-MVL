@@ -535,7 +535,28 @@ async function syncAllScheduledData(){if(!canManage('escalas')&&!canManage('memb
 async function syncScaleConfirmationAsAdmin(scaleId,usuarioId,encontros,status=''){if(!canManage('escalas'))return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync_admin',escalaId,usuarioId,encontros,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
 async function syncScaleReminder(scale){if(!canManage('escalas')||!scale?.id)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_sync',escala:{id:scale.id,evento:scale.evento||'Escala',cantorNome:scaleSingerName(scale),integranteIds:scaleParticipants(scale),encontros:scaleEncounters(scale)}})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('escala_sync',e);return false;}}
 async function syncScaleDelete(scaleId){if(!canManage('escalas')||!scaleId)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_delete',escalaId})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
-async function syncScaleConfirmation(scaleId,encontros,status=''){try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync',escalaId,encontros,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
+async function syncScaleConfirmation(scaleId,encontros,encontroId,respostaStatus){
+  try{
+    const idToken=await currentUser.getIdToken();
+    const r=await fetch(MVL_PUSH_ENDPOINT,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({
+        idToken,
+        tipo:'confirmacao_sync',
+        escalaId,
+        encontros,
+        encontroId,
+        respostaStatus
+      })
+    });
+    const j=await r.json().catch(()=>({ok:false}));
+    return !!j.ok;
+  }catch(e){
+    console.error('Erro ao sincronizar confirmação:',e);
+    return false;
+  }
+}
 async function getScaleConfirmations(s){
   // A confirmação pertence ao encontro, mas fica armazenada por integrante na escala.
   // Consulta de leitura; a regra do Firestore limita o acesso aos participantes e gestores.
@@ -566,9 +587,47 @@ async function buildScaleCard(s){
 }
 async function deleteScaleCascade(scaleId){const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();syncScaleDelete(scaleId).catch(()=>{});}
 async function setEncounterConfirmation(scale,encounterId,status){
-  let data={};try{const ref=doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid);const old=await getDoc(ref);data=old.exists()?old.data():{};const encontros={...(data.encontros||{}),[encounterId]:status};await setDoc(ref,{usuarioId:currentUser.uid,usuarioNome:currentUserData.nome||currentUser.email,encontros,atualizadoEm:serverTimestamp()},{merge:true});data.encontros=encontros;}catch(e){console.error(e);alert('Não foi possível registrar sua resposta.');return;}
-  alert(status==='confirmado'?'Presença confirmada neste encontro.':'Resposta registrada neste encontro.');renderScales().catch(()=>{});syncScaleConfirmation(scale.id,data.encontros||{}).catch(()=>{});
-  const enc=scaleEncounters(scale).find(e=>e.id===encounterId);const admins=adminIdsFor('escalas').filter(id=>id!==currentUser.uid);if(admins.length){const texto=`${currentUserData.nome||currentUser.email} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;createNotifications(admins,'Resposta de escala',texto,'confirmacao_escala',scale.id).catch(()=>{});enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins).catch(()=>{});}
+  let data={};
+  try{
+    const ref=doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid);
+    const old=await getDoc(ref);
+    data=old.exists()?old.data():{};
+    const encontros={...(data.encontros||{}),[encounterId]:status};
+    await setDoc(ref,{
+      usuarioId:currentUser.uid,
+      usuarioNome:currentUserData.nome||currentUser.email,
+      encontros,
+      atualizadoEm:serverTimestamp()
+    },{merge:true});
+    data.encontros=encontros;
+  }catch(e){
+    console.error(e);
+    alert('Não foi possível registrar sua resposta.');
+    return;
+  }
+
+  const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
+  const nome=currentUserData.nome||currentUser.email;
+  const texto=`${nome} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;
+
+  // Notificação interna para todos do encontro específico e administradores de escalas.
+  // O próprio respondente é excluído e createNotifications elimina destinatários repetidos.
+  const admins=adminIdsFor('escalas');
+  const destinatarios=[...new Set([...(enc?.integranteIds||[]),...admins])]
+    .filter(id=>id&&id!==currentUser.uid);
+  createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id)
+    .catch(e=>console.error('Falha ao criar notificações da confirmação:',e));
+
+  // O Apps Script registra o mapa completo e envia um único push aos mesmos grupos.
+  // Não enviar um push administrativo separado para evitar duplicidade.
+  syncScaleConfirmation(scale.id,data.encontros||{},encounterId,status)
+    .then(ok=>{
+      if(!ok)console.error('Falha ao sincronizar confirmação com o Apps Script.');
+    })
+    .catch(e=>console.error('Falha ao sincronizar confirmação:',e));
+
+  alert(status==='confirmado'?'Presença confirmada neste encontro.':'Resposta registrada neste encontro.');
+  renderScales().catch(()=>{});
 }
 // Compatibilidade com botões/escala antiga
 async function setConfirmation(scale,status){const e=principalEncounter(scale);if(e)return setEncounterConfirmation(scale,e.id,status);}
