@@ -83,7 +83,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.14';
+const MVL_VERSION='11.4.15';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -446,18 +446,27 @@ async function renderRepertoires(editItem=null){
   const archivedRepertoires=allRepertoires.filter(r=>!isRepertoireVisible(r));
   const repGroups=new Map();
   for(const r of allRepertoires){
-    const linkedSingerIds=new Set(
-      scalesCache
-        .filter(scale=>String(scale.repertorioId||'')===String(r.id)&&String(scale.cantorId||'').trim())
-        .map(scale=>String(scale.cantorId).trim())
-    );
+    const linkedScales=scalesCache.filter(scale=>String(scale.repertorioId||'')===String(r.id)&&String(scale.cantorId||'').trim());
+    const linkedSingerIds=new Set(linkedScales.map(scale=>String(scale.cantorId).trim()));
     if(!linkedSingerIds.size)continue;
-    const items=r.musicaItens||legacyRepItems(r);const singers=new Map();
-    for(const item of items){
-      const id=String(item.cantorId||'').trim();
-      if(!id||!linkedSingerIds.has(id))continue;
-      const name=String(item.cantorNome||userName(id)||'').trim();
-      if(!singers.has(id))singers.set(id,{id,name:name||'Cantor não identificado'});
+    const items=r.musicaItens||legacyRepItems(r);
+    const hasSingerAssignments=items.some(item=>String(item.cantorId||'').trim());
+    const singers=new Map();
+    if(hasSingerAssignments){
+      for(const item of items){
+        const id=String(item.cantorId||'').trim();
+        if(!id||!linkedSingerIds.has(id))continue;
+        const name=String(item.cantorNome||userName(id)||'').trim();
+        if(!singers.has(id))singers.set(id,{id,name:name||'Cantor não identificado'});
+      }
+    }else{
+      // Compatibilidade: repertórios antigos sem cantorId nas músicas usam o cantor principal da escala vinculada.
+      for(const scale of linkedScales){
+        const id=String(scale.cantorId||'').trim();
+        if(!id)continue;
+        const name=String(scale.cantorNome||userName(id)||'').trim();
+        if(!singers.has(id))singers.set(id,{id,name:name||'Cantor não identificado'});
+      }
     }
     for(const [key,singer] of singers){
       if(!repGroups.has(key))repGroups.set(key,{...singer,repertoires:new Map()});
@@ -469,7 +478,10 @@ async function renderRepertoires(editItem=null){
     sectionSpecial.insertAdjacentHTML('beforeend','<div class="rep-folders"><h3>Por cantor</h3>'+groups.map(g=>{
       const u=g.id?usersCache.find(x=>x.id===g.id):null;const avatar=u?memberAvatarHtml(u,'rep-singer-avatar'):'<span class="rep-singer-avatar avatar-fallback">🎤</span>';
       const reps=[...g.repertoires.values()].sort((a,b)=>repertoireDateKey(b).localeCompare(repertoireDateKey(a)));
-      return '<details class="rep-singer-folder"><summary>'+avatar+'<span class="rep-singer-name">'+escapeHtml(g.name)+'</span><span class="rep-singer-count">'+reps.length+'</span></summary>'+reps.map(r=>'<button class="rep-derived-link" data-rep="'+escapeAttr(r.id)+'">📅 '+escapeHtml(repertoireDateLabel(r)||'Sem data')+' • '+escapeHtml(r.nome||'Repertório')+(isRepertoireVisible(r)?'':' • Anterior')+'</button>').join('')+'</details>';
+      const current=reps.filter(isRepertoireVisible),previous=reps.filter(r=>!isRepertoireVisible(r));
+      const links=list=>list.map(r=>'<button class="rep-derived-link" data-rep="'+escapeAttr(r.id)+'">📅 '+escapeHtml(repertoireDateLabel(r)||'Sem data')+' • '+escapeHtml(r.nome||'Repertório')+'</button>').join('');
+      const previousSection=previous.length?'<details class="rep-singer-archive"><summary>Repertórios anteriores ('+previous.length+')</summary>'+links(previous)+'</details>':'';
+      return '<details class="rep-singer-folder"><summary>'+avatar+'<span class="rep-singer-name">'+escapeHtml(g.name)+'</span><span class="rep-singer-count">'+reps.length+'</span></summary><div class="rep-singer-current">'+links(current)+'</div>'+previousSection+'</details>';
     }).join('')+'</div>');
     sectionSpecial.querySelectorAll('.rep-derived-link').forEach(b=>b.onclick=()=>openRepertoireDetail(b.dataset.rep,'repertorio'));
   }
@@ -480,8 +492,8 @@ async function renderRepertoires(editItem=null){
   const total=document.createElement('p');total.className='rep-total-count';total.textContent='Histórico completo: '+allRepertoires.length+' repertório'+(allRepertoires.length===1?'':'s')+'.';listEl.appendChild(total);
   if(activeRepertoires.length)activeRepertoires.forEach(r=>listEl.appendChild(makeCard(r)));else{const empty=document.createElement('div');empty.className='empty';empty.textContent='Nenhum repertório atual ou futuro.';listEl.appendChild(empty);}
   if(archivedRepertoires.length){
-    const archive=document.createElement('section');archive.className='rep-archive';
-    const heading=document.createElement('h3');heading.className='rep-archive-title';heading.textContent='Repertórios anteriores ('+archivedRepertoires.length+')';archive.appendChild(heading);
+    const archive=document.createElement('details');archive.className='rep-archive';
+    const heading=document.createElement('summary');heading.className='rep-archive-title';heading.textContent='Repertórios anteriores ('+archivedRepertoires.length+')';archive.appendChild(heading);
     const contents=document.createElement('div');contents.className='rep-archive-list';archivedRepertoires.forEach(r=>contents.appendChild(makeCard(r)));archive.appendChild(contents);listEl.appendChild(archive);
   }
 }
