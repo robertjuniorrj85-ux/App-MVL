@@ -622,3 +622,12 @@ nav .nav-btn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rep-archive{display:grid;gap:10px;margin:18px 0 8px;padding:14px;border:1px solid #5a343b;border-radius:13px;background:#171114}
 .rep-archive-title{margin:0;padding:0 0 9px;border-bottom:1px solid #493038;color:#f0cbd1;font-size:15px}
 .rep-archive-list{display:grid;gap:10px}
+
+
+/* V11.4.15 — histórico recolhido dentro das pastas de cantores */
+.rep-singer-archive{display:grid;gap:7px;margin:8px 0 4px;padding:9px 10px;border:1px solid #493038;border-radius:10px;background:#171114}
+.rep-singer-archive>summary{cursor:pointer;color:#f0cbd1;font-size:12px;font-weight:700;list-style:none}
+.rep-singer-archive>summary::-webkit-details-marker{display:none}
+.rep-singer-current,.rep-archive-list{display:grid;gap:10px}
+.rep-archive>summary{cursor:pointer}
+.rep-singer-folder{display:grid;gap:8px}
