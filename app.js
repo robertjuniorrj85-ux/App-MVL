@@ -83,9 +83,9 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.10';
+const MVL_VERSION='11.4.11';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
-const MVL_V10_MAX_PHOTO_BYTES=2*1024*1024;
+const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
 let oneSignalSyncJob=null;
 let oneSignalLastSync={uid:'',sid:'',at:0};
@@ -161,7 +161,7 @@ function arquivoParaDataUrl(file){return new Promise((resolve,reject)=>{const r=
 async function enviarFotoPerfil(file){
   if(!file)throw new Error('Selecione uma foto.');
   if(!/^image\/(jpeg|png|webp)$/i.test(file.type))throw new Error('Use uma imagem JPG, PNG ou WEBP.');
-  if(file.size>MVL_V10_MAX_PHOTO_BYTES)throw new Error('A foto deve ter no máximo 2 MB.');
+  if(file.size>MVL_V10_MAX_PHOTO_BYTES)throw new Error('A foto deve ter no máximo 700 KB.');
   const dataUrl=await arquivoParaDataUrl(file),base64=dataUrl.split(',')[1]||'';
   const result=await chamarBackendV10('perfil_foto_upload',{uid:currentUser.uid,usuarioId:currentUser.uid,mimeType:file.type,nomeArquivo:file.name,fileName:file.name,imagemBase64:base64,base64,dataUrl});
   const fotoUrl=result.fotoUrl||result.url||result.webContentLink||result.downloadUrl||'';
@@ -298,8 +298,8 @@ function identifyOneSignal(){
 }
 function updateRoleUI(){roleBadge.textContent=isPrincipalAdmin?'Administrador principal':isLimitedAdmin()?'Administrador':'Integrante';roleBadge.classList.toggle('admin',isAdmin);}
 function updateHeaderAvatar(){const host=$('header-avatar');if(!host)return;const url=fotoUrlUsuario(currentUserData||{});host.innerHTML=url?`<img src="${escapeAttr(url)}" alt="Perfil" referrerpolicy="no-referrer">`:memberIcon(currentUserData||{});}
-async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id');if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='conversas'&&id)await openConversation(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
-async function openNotificationTarget(n){if(!n)return;if(n.lida!==true)await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()}).catch(()=>{});if(n.tipo==='chat_escala'&&n.refId)return openScaleChat(n.refId);if(n.tipo==='mensagem')return openSection('comunicacao');if(n.tipo==='agenda')return openSection('agenda');if(n.tipo==='confirmacao_escala'&&n.refId)return openScaleDetail(n.refId);return openSection('notificacoes');}
+async function handleDeepLink(){const q=new URLSearchParams(location.search),open=q.get('open'),id=q.get('id'),encontroId=q.get('encontroId')||'';if(!open)return;try{if(open==='scalechat'&&id)await openScaleChat(id);else if(open==='escala'&&id)await openScaleDetail(id,encontroId);else if(open==='conversas'&&id)await openConversation(id);else if(open==='comunicacao')await openSection('comunicacao');else if(open==='notificacoes')await openSection('notificacoes');}catch(e){console.error('Deep link MVL',e);alert('Não foi possível abrir o destino desta notificação.');}finally{history.replaceState(history.state,'',location.pathname+location.hash);}}
+async function openNotificationTarget(n){if(!n)return;if(n.lida!==true)await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()}).catch(()=>{});if(n.tipo==='chat_escala'&&n.refId)return openScaleChat(n.refId);if(n.tipo==='escala'&&n.refId)return openScaleDetail(n.refId);if(n.tipo==='conversa'&&n.refId)return openConversation(n.refId);if(n.tipo==='mensagem')return openSection('comunicacao');if(n.tipo==='agenda')return openSection('agenda');if(n.tipo==='confirmacao_escala'&&n.refId)return openScaleDetail(n.escalaId||n.refId,n.encontroId||'');return openSection('notificacoes');}
 function pushNav(page,detail=''){const key=detail?`${page}:${detail}`:page;if(history.state?.mvlKey===key)return;navStack.push(key);history.pushState({mvl:true,page,detail,mvlKey:key},'','#'+encodeURIComponent(key));}
 function goHome(fromPop=false){sectionView.classList.remove('chat-fullscreen');currentPage='inicio';editingId=null;homeView.classList.remove('hide');sectionView.classList.add('hide');setActiveNav('inicio');renderNextScale().catch(e=>console.error('Próximo culto',e));renderPrayerCard().catch(e=>{console.error('Oração Home',e);const h=$('prayer-card');if(h)h.innerHTML='<p class=\"muted\">Não foi possível carregar o espaço de oração.</p>';});if(!fromPop)pushNav('inicio');}
 async function restoreNavState(state){const page=state?.page||'inicio',detail=state?.detail||'';if(page==='inicio')return goHome(true);if(page==='conversa'&&detail)return openConversation(detail,true);if(page==='scalechat'&&detail)return openScaleChat(detail,true);return openSection(page,true);}
@@ -420,18 +420,32 @@ async function renderRepertoires(editItem=null){
       <div class="subpanel"><b>Selecione as músicas</b><div class="multi-list" id="rep-song-options">${songsCache.length?songsCache.map(s=>`<label class="multi-item"><input class="rep-check" type="checkbox" value="${s.id}"> ${escapeHtml(s.titulo||'Sem título')}</label>`).join(''):'<span class="muted">Cadastre músicas primeiro.</span>'}</div><div id="rep-config-list" class="rep-config-list"></div></div>
     </div>`;wireRepSelector(d.musicaItens||legacyRepItems(d));saveBtn.onclick=saveRepertoire;}
   addSearchBox('Pesquisar repertório...',filterCards);
+  // V11.4.11: agrupamento derivado dos cantores atribuídos a cada música,
+  // sem depender do cantor global da escala e sem duplicar documentos.
   const repGroups=new Map();
-  for(const s of scalesCache){
-    if(!s.repertorioId)continue;
-    const r=repById(s.repertorioId);if(!r)continue;
-    const singer=scaleSingerName(s);
-    const e=nextEncounterOfScale(s)||latestEncounterOfScale(s);
-    const key=s.cantorId||singer;
-    if(!repGroups.has(key))repGroups.set(key,{singer,items:[]});
-    repGroups.get(key).items.push({r,s,e});
+  for(const r of repertoiresCache){
+    const items=r.musicaItens||legacyRepItems(r);
+    const singers=new Map();
+    for(const item of items){
+      const id=String(item.cantorId||'').trim();
+      const name=String(item.cantorNome||(id?userName(id):'')||'').trim();
+      if(!id&&!name)continue;
+      const key=id||`nome:${name.toLocaleLowerCase('pt-BR')}`;
+      if(!singers.has(key))singers.set(key,{id,name:name||'Cantor não identificado'});
+    }
+    for(const [key,singer] of singers){
+      if(!repGroups.has(key))repGroups.set(key,{...singer,repertoires:new Map()});
+      repGroups.get(key).repertoires.set(r.id,r);
+    }
   }
   if(repGroups.size){
-    sectionSpecial.insertAdjacentHTML('beforeend',`<div class="rep-folders"><h3>Por cantor</h3>${[...repGroups.values()].sort((a,b)=>a.singer.localeCompare(b.singer)).map(g=>`<details class="rep-singer-folder"><summary>🎤 ${escapeHtml(g.singer)} <span>${g.items.length}</span></summary>${g.items.sort((a,b)=>(b.e?.data||'').localeCompare(a.e?.data||'')).map(x=>`<button class="rep-derived-link" data-rep="${escapeAttr(x.r.id)}">📅 ${escapeHtml(dateBR(x.e?.data||x.r.data||''))} • ${escapeHtml(x.s.evento||x.r.nome||'Repertório')}</button>`).join('')}</details>`).join('')}</div>`);
+    const groups=[...repGroups.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
+    sectionSpecial.insertAdjacentHTML('beforeend',`<div class="rep-folders"><h3>Por cantor</h3>${groups.map(g=>{
+      const u=g.id?usersCache.find(x=>x.id===g.id):null;
+      const avatar=u?memberAvatarHtml(u,'rep-singer-avatar'):'<span class="rep-singer-avatar avatar-fallback">🎤</span>';
+      const reps=[...g.repertoires.values()].sort((a,b)=>(b.data||'').localeCompare(a.data||''));
+      return `<details class="rep-singer-folder"><summary>${avatar}<span class="rep-singer-name">${escapeHtml(g.name)}</span><span class="rep-singer-count">${reps.length}</span></summary>${reps.map(r=>`<button class="rep-derived-link" data-rep="${escapeAttr(r.id)}">📅 ${escapeHtml(dateBR(r.data||''))} • ${escapeHtml(r.nome||'Repertório')}</button>`).join('')}</details>`;
+    }).join('')}</div>`);
     sectionSpecial.querySelectorAll('.rep-derived-link').forEach(b=>b.onclick=()=>openRepertoireDetail(b.dataset.rep,'repertorio'));
   }
   listEl.innerHTML='';if(!repertoiresCache.length){listEl.innerHTML='<div class="empty">Nenhum repertório cadastrado.</div>';return;}
@@ -453,7 +467,19 @@ async function saveRepertoire(){
   const payload={nome,data,observacoes,musicaItens,musicaIds:musicaItens.map(i=>i.musicaId)};saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'repertorios',editingId),{...payload,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});else await addDoc(collection(db,'repertorios'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});editingId=null;await refreshCaches();renderRepertoires();}catch(e){console.error(e);alert('Não foi possível salvar o repertório.');}finally{saveBtn.disabled=false;}
 }
 async function openRepertoireDetail(repId,backPage='repertorio',cantorId=''){
-  await refreshCaches();const r=repById(repId);if(!r){alert('Repertório não encontrado.');return;}currentPage='rep-detalhe';homeView.classList.add('hide');sectionView.classList.remove('hide');showSectionHeader(r.nome||'Repertório',`${dateBR(r.data)} • músicas e links`);adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<button id="back-rep" class="back-inline">← Voltar para ${backPage==='escalas'?'escalas':'repertórios'}</button>${r.observacoes?`<div class="readonly-note">${escapeHtml(r.observacoes)}</div>`:''}`;$('back-rep').onclick=()=>openSection(backPage);listEl.innerHTML='';const items=(r.musicaItens||legacyRepItems(r)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma música neste repertório.</div>';return;}
+  await refreshCaches();const r=repById(repId);if(!r){alert('Repertório não encontrado.');return;}currentPage='rep-detalhe';homeView.classList.add('hide');sectionView.classList.remove('hide');showSectionHeader(r.nome||'Repertório',`${dateBR(r.data)} • músicas e links`);adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<button id="back-rep" class="back-inline">← Voltar para ${backPage==='escalas'?'escalas':'repertórios'}</button>${r.observacoes?`<div class="readonly-note">${escapeHtml(r.observacoes)}</div>`:''}`;$('back-rep').onclick=()=>openSection(backPage);
+  const today=dateKey(new Date());
+  const linkedEncounters=scalesCache
+    .filter(scale=>scale.repertorioId===repId)
+    .flatMap(scale=>scaleEncounters(scale)
+      .filter(enc=>enc.data&&enc.data>=today)
+      .map(enc=>({scale,enc})))
+    .sort((a,b)=>encounterDateTime(a.enc).localeCompare(encounterDateTime(b.enc)));
+  if(linkedEncounters.length){
+    sectionSpecial.insertAdjacentHTML('beforeend',`<div class="rep-linked-encounters"><b>Próximos encontros vinculados</b>${linkedEncounters.map((item,index)=>`<button type="button" class="rep-linked-encounter" data-scale="${escapeAttr(item.scale.id)}" data-encounter="${escapeAttr(item.enc.id)}">📅 ${escapeHtml(dateBR(item.enc.data))} ${escapeHtml(item.enc.horario||'')} • ${escapeHtml(item.enc.nome||item.scale.evento||'Encontro')}</button>`).join('')}</div>`);
+    sectionSpecial.querySelectorAll('.rep-linked-encounter').forEach(button=>button.onclick=()=>openScaleDetail(button.dataset.scale,button.dataset.encounter));
+  }
+  listEl.innerHTML='';const items=(r.musicaItens||legacyRepItems(r)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma música neste repertório.</div>';return;}
   items.forEach((it,i)=>{const s=songById(it.musicaId)||{},rr=resolvedSong(it.musicaId,cantorId||it.cantorId||'',it);const card=document.createElement('div');card.className='item-card repertoire-song';card.innerHTML=`<div class="song-number">${i+1}</div><div><h3>${escapeHtml(s.titulo||'Música')}</h3>${cantorId?`<div class="item-meta">🎤 ${escapeHtml(userName(cantorId))}</div>`:(it.cantorNome?`<div class="item-meta">🎤 ${escapeHtml(it.cantorNome)}</div>`:'')}<div class="item-meta"><b>Tom:</b> ${escapeHtml(rr.tom||'—')} ${rr.origem==='padrao'?'<small>🌐 Padrão</small>':rr.origem==='cantor'?'<small>🎤 Cantor</small>':''}</div>${s.observacoes?`<div class="item-meta">${escapeHtml(s.observacoes)}</div>`:''}<div class="item-actions">${safeUrl(it.ouvirLink)?`<a class="link-btn" href="${escapeAttr(it.ouvirLink)}" target="_blank" rel="noopener">▶️ Ouvir</a>`:''}${safeUrl(rr.cifraLink)?`<a class="link-btn" href="${escapeAttr(rr.cifraLink)}" target="_blank" rel="noopener">🎼 Abrir Cifra</a>`:''}${safeUrl(it.multitrackLink)?`<a class="link-btn" href="${escapeAttr(it.multitrackLink)}" target="_blank" rel="noopener">🎚️ Multitrack</a>`:''}</div></div>`;listEl.appendChild(card);});
 }
 
@@ -528,7 +554,7 @@ async function saveScale(){
   saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'escalas',editingId),{...payload,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});else{const ref=await addDoc(collection(db,'escalas'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});scaleId=ref.id;}}catch(e){console.error('Falha ao salvar escala',e);alert('Não foi possível salvar a escala.');saveBtn.disabled=false;return;}
   alert('Escala salva com sucesso.');editingId=null;await refreshCaches();renderScales().catch(e=>console.error('Atualização da lista de escalas',e));saveBtn.disabled=false;
   const texto=`${evento} • ${userName(cantorId)} — ${dateBR(principal.data)}${principal.horario?' às '+principal.horario:''}.`;
-  if(notifyNow&&integranteIds.length){const tituloEscala=equipeResponsavel==='nova_geracao'?'⚡ Nova escala Nova Geração':'🎵 Nova escala MVL';createNotifications(integranteIds,tituloEscala,texto,'escala',scaleId).catch(e=>console.error('Notificação interna da escala',e));enviarPushMVL('escala',tituloEscala,texto,integranteIds).catch(e=>console.error('Push da escala',e));}
+  if(notifyNow&&integranteIds.length){const tituloEscala=equipeResponsavel==='nova_geracao'?'⚡ Nova escala Nova Geração':'🎵 Nova escala MVL';const escalaUrl=`https://robertjuniorrj85-ux.github.io/App-MVL/?open=escala&id=${encodeURIComponent(scaleId)}`;createNotifications(integranteIds,tituloEscala,texto,'escala',scaleId).catch(e=>console.error('Notificação interna da escala',e));enviarPushMVL('escala',tituloEscala,texto,integranteIds,escalaUrl).catch(e=>console.error('Push da escala',e));}
   syncScaleReminder({id:scaleId,...payload}).catch(e=>console.error('Sincronização de encontros/alertas',e));
 }
 async function syncAllScheduledData(){if(!canManage('escalas')&&!canManage('membros'))return;await syncBirthdaysForPush();for(const scale of scalesCache){await syncScaleReminder(scale);try{const snap=await getDocs(collection(db,'escalas',scale.id,'confirmacoes'));for(const d of snap.docs){const x=d.data();if(x?.usuarioId)await syncScaleConfirmationAsAdmin(scale.id,x.usuarioId,x.encontros||{},x.status||'');}}catch(e){console.warn('Confirmações para lembretes',scale.id,e);}}}
@@ -550,11 +576,19 @@ async function syncScaleConfirmation(scaleId,encontros,encontroId,respostaStatus
         respostaStatus
       })
     });
-    const j=await r.json().catch(()=>({ok:false}));
-    return !!j.ok;
+    const j=await r.json().catch(()=>({ok:false,erro:'Resposta inválida do servidor.'}));
+    return {
+      ok:j.ok===true,
+      registroOk:j.registroOk===true,
+      pushAceito:j.pushAceito===true,
+      pushErro:j.pushErro||'',
+      totalDestinatarios:Number(j.totalDestinatarios||0),
+      totalSubscriptions:Number(j.totalSubscriptions||0),
+      erro:j.erro||''
+    };
   }catch(e){
     console.error('Erro ao sincronizar confirmação:',e);
-    return false;
+    return {ok:false,registroOk:false,pushAceito:false,erro:String(e)};
   }
 }
 async function getScaleConfirmations(s){
@@ -580,7 +614,7 @@ async function buildScaleCard(s){
       const response=c.encontros?.[e.id]||(e.id==='principal'?c.status:'');
       return `<div class="scale-confirmation-member"><span>${escapeHtml(userName(uid))}</span>${confirmationLoadError?'<span class="status-pill">Indisponível</span>':encounterStatusHtml(response)}</div>`;
     }).join('');
-    return `<div class="encounter-card ${e.principal?'principal':''}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${involved?encounterStatusHtml(st):''}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div><div class="scale-confirmations"><b>Participantes e confirmações</b>${participantRows||'<div class="item-meta">Nenhum participante cadastrado neste encontro.</div>'}</div>${involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;
+    return `<div class="encounter-card ${e.principal?'principal':''}" data-encounter-id="${escapeAttr(e.id)}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${involved?encounterStatusHtml(st):''}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div><div class="scale-confirmations"><b>Participantes e confirmações</b>${participantRows||'<div class="item-meta">Nenhum participante cadastrado neste encontro.</div>'}</div>${involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;
   }).join('');
   card.innerHTML=`<div class="scale-headline"><div><div class="scale-team-label ${scaleTeam(s)}">${teamName(scaleTeam(s))}</div><h3>🎤 ${escapeHtml(scaleSingerName(s))}</h3>${_concluida?'<span class="status-pill done">Concluída</span>':''}<div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${manageScale?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
   card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelectorAll('.enc-yes').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'confirmado'));card.querySelectorAll('.enc-no').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'nao_posso'));card.querySelector('.edit-scale')?.addEventListener('click',()=>{renderScales(s);scrollToAdminForm();});card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
@@ -615,14 +649,15 @@ async function setEncounterConfirmation(scale,encounterId,status){
   const admins=adminIdsFor('escalas');
   const destinatarios=[...new Set([...(enc?.integranteIds||[]),...admins])]
     .filter(id=>id&&id!==currentUser.uid);
-  createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id)
+  createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId})
     .catch(e=>console.error('Falha ao criar notificações da confirmação:',e));
 
   // O Apps Script registra o mapa completo e envia um único push aos mesmos grupos.
   // Não enviar um push administrativo separado para evitar duplicidade.
   syncScaleConfirmation(scale.id,data.encontros||{},encounterId,status)
-    .then(ok=>{
-      if(!ok)console.error('Falha ao sincronizar confirmação com o Apps Script.');
+    .then(resultado=>{
+      if(!resultado?.registroOk)console.error('Apps Script não confirmou o registro da resposta:',resultado);
+      else if(!resultado.pushAceito)console.warn('Resposta registrada, mas o push não foi aceito pelo OneSignal:',resultado?.pushErro||resultado);
     })
     .catch(e=>console.error('Falha ao sincronizar confirmação:',e));
 
@@ -737,7 +772,23 @@ async function renderAgenda(editItem=null){
   }
 }
 async function renderCalendar(){return renderAgenda();}
-async function openScaleDetail(scaleId){await refreshCaches();const s=scalesCache.find(x=>x.id===scaleId);if(!s)return;currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,s.evento||'Escala');adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';listEl.innerHTML='';listEl.appendChild(await buildScaleCard(s));$('scale-detail-back').onclick=goHome;}
+async function openScaleDetail(scaleId,encontroId=''){
+  await refreshCaches();
+  const s=scalesCache.find(x=>x.id===scaleId);
+  if(!s){alert('Escala não encontrada.');return;}
+  const encounters=scaleEncounters(s);
+  const target=encounters.find(e=>e.id===encontroId);
+  currentPage='escalas';homeView.classList.add('hide');sectionView.classList.remove('hide');
+  setActiveNav('escalas');pushNav('escalas');showSectionHeader(`🎤 ${scaleSingerName(s)}`,target?`${s.evento||'Escala'} • ${target.nome||'Encontro'} • ${dateBR(target.data)}`:(s.evento||'Escala'));
+  adminPanel.classList.add('hide');sectionSpecial.innerHTML='<button id="scale-detail-back" class="back-inline">← Voltar</button>';
+  listEl.innerHTML='';const card=await buildScaleCard(s);listEl.appendChild(card);
+  $('scale-detail-back').onclick=goHome;
+  if(target){
+    const targetCard=[...card.querySelectorAll('.encounter-card')]
+      .find(el=>String(el.dataset.encounterId||'')===String(encontroId));
+    if(targetCard){targetCard.classList.add('notification-target');targetCard.scrollIntoView({behavior:'smooth',block:'center'});}
+  }
+}
 const MVL_EMOJIS=['🙏','🙌','❤️','👏','🔥','🎵','🎤','🎸','🥁','🎹','😂','😊','👍','✅','🎶','💪','🤝','🎉'];
 async function openScaleChat(scaleId,fromPop=false){
   await refreshCaches();
@@ -980,8 +1031,14 @@ function mvlShowReactionUsers(reactions,emoji){
 async function loadMessages(){const all=await safeDocs('mensagens'),visible=(canManage('comunicacao')?all:all.filter(m=>m.autorId===currentUser.uid)).sort(byCreatedDesc);listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhuma mensagem ainda.</div>';return;}visible.forEach(m=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<span class="status-pill ${m.status==='nova'?'new':m.status==='resolvida'?'done':''}">${escapeHtml(m.status||'nova')}</span><h3>${escapeHtml(m.tipo||'Mensagem')}</h3>${canManage('comunicacao')?`<div class="item-meta"><b>De:</b> ${escapeHtml(m.autorNome||m.autorEmail||'')}</div>`:''}<div class="item-meta">${escapeHtml(m.mensagem||'')}</div>${canManage('comunicacao')?'<div class="item-actions"><button class="edit-btn">Marcar lida</button><button class="confirm-btn">Resolvida</button><button class="delete-btn msg-delete">Excluir</button></div>':''}`;if(canManage('comunicacao')){card.querySelector('.edit-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'lida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.confirm-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'resolvida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.msg-delete').onclick=async()=>{if(confirm('Excluir esta mensagem privada?')){await deleteDoc(doc(db,'mensagens',m.id));loadMessages();}};}listEl.appendChild(card);});}
 
 // NOTIFICAÇÕES INTERNAS: 1 DOCUMENTO POR DESTINATÁRIO
-async function createNotifications(recipientIds,title,message,type,refId=''){
-  const ids=[...new Set(recipientIds)].filter(Boolean);if(!ids.length)return;const batch=writeBatch(db);ids.forEach(uid=>{const ref=doc(collection(db,'notificacoes'));batch.set(ref,{destinatarioId:uid,remetenteId:currentUser.uid,titulo:title,mensagem:message,tipo,refId,lida:false,criadoEm:serverTimestamp()});});await batch.commit();
+async function createNotifications(recipientIds,title,message,type,refId='',metadata={}){
+  const ids=[...new Set(recipientIds)].filter(Boolean);if(!ids.length)return;
+  const batch=writeBatch(db);
+  ids.forEach(uid=>{
+    const ref=doc(collection(db,'notificacoes'));
+    batch.set(ref,{destinatarioId:uid,remetenteId:currentUser.uid,titulo:title,mensagem:message,tipo,refId,...metadata,lida:false,criadoEm:serverTimestamp()});
+  });
+  await batch.commit();
 }
 function bindNotifications(){
   if(notifUnsub)notifUnsub();const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));notifUnsub=onSnapshot(q,snap=>{const relevant=snap.docs.map(d=>({id:d.id,...d.data()})),unread=relevant.filter(n=>n.lida!==true);$('notif-count').textContent=String(unread.length);$('notif-count').classList.toggle('hide',unread.length===0);for(const n of unread){if(!lastNotificationIds.has(n.id)){lastNotificationIds.add(n.id);if(document.visibilityState==='visible')maybeBrowserNotify(n);}}},e=>console.error('notifications',e));
@@ -1006,7 +1063,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.10: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.11: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -1196,10 +1253,10 @@ async function renderPrayerCard(){
 }
 
 
-function renderProfile(){showSectionHeader('Meu Perfil','Atualize sua foto, seus dados e sua senha.');adminPanel.classList.add('hide');const d=currentUserData||{};sectionSpecial.innerHTML=`<div class="admin-panel profile-photo-panel"><h3>Foto de perfil</h3><div class="profile-photo-row">${memberAvatarHtml(d,'profile-avatar')}<div><input id="profile-photo-file" type="file" accept="image/jpeg,image/png,image/webp"><p class="muted">JPG, PNG ou WEBP • máximo 2 MB.</p><div class="item-actions"><button id="profile-photo-save" class="primary">Enviar foto</button>${fotoUrlUsuario(d)?'<button id="profile-photo-delete" class="delete-btn">Remover foto</button>':''}</div><p id="profile-photo-status" class="hint"></p></div></div></div><div class="admin-panel"><h3>Dados pessoais</h3><div class="form-grid"><input id="profile-name" placeholder="Nome" value="${escapeAttr(d.nome||'')}"><input id="profile-role" placeholder="Função / Instrumento" value="${escapeAttr(d.funcao||'')}"><input value="${escapeAttr(currentUser.email||'')}" disabled></div><div class="form-actions"><button id="save-profile" class="primary">Salvar perfil</button></div></div><div class="admin-panel"><h3>Alterar senha</h3><div class="form-grid"><input id="current-pass" type="password" placeholder="Senha atual"><input id="profile-new-pass" type="password" placeholder="Nova senha"><input id="profile-confirm-pass" type="password" placeholder="Confirmar nova senha"></div><div class="form-actions"><button id="change-pass" class="secondary">Alterar senha</button></div><p id="profile-pass-status" class="hint"></p></div>`;$('save-profile').onclick=saveProfile;$('change-pass').onclick=changePasswordFromProfile;$('profile-photo-save').onclick=async()=>{const st=$('profile-photo-status'),file=$('profile-photo-file').files?.[0];try{st.textContent='Enviando foto...';st.className='hint';await enviarFotoPerfil(file);st.textContent='Foto atualizada com sucesso.';st.className='hint success';setTimeout(()=>renderProfile(),350);}catch(e){console.error(e);st.textContent=e.message||'Não foi possível enviar a foto.';st.className='hint error';}};$('profile-photo-delete')?.addEventListener('click',async()=>{if(!confirm('Remover sua foto de perfil?'))return;const st=$('profile-photo-status');try{st.textContent='Removendo foto...';await excluirFotoPerfil();renderProfile();}catch(e){console.error(e);st.textContent=e.message||'Não foi possível remover a foto.';st.className='hint error';}});}
+function renderProfile(){showSectionHeader('Meu Perfil','Atualize sua foto, seus dados e sua senha.');adminPanel.classList.add('hide');const d=currentUserData||{};sectionSpecial.innerHTML=`<div class="admin-panel profile-photo-panel"><h3>Foto de perfil</h3><div class="profile-photo-row">${memberAvatarHtml(d,'profile-avatar')}<div><input id="profile-photo-file" type="file" accept="image/jpeg,image/png,image/webp"><p class="muted">JPG, PNG ou WEBP • máximo 700 KB.</p><div class="item-actions"><button id="profile-photo-save" class="primary">Enviar foto</button>${fotoUrlUsuario(d)?'<button id="profile-photo-delete" class="delete-btn">Remover foto</button>':''}</div><p id="profile-photo-status" class="hint"></p></div></div></div><div class="admin-panel"><h3>Dados pessoais</h3><div class="form-grid"><input id="profile-name" placeholder="Nome" value="${escapeAttr(d.nome||'')}"><input id="profile-role" placeholder="Função / Instrumento" value="${escapeAttr(d.funcao||'')}"><input value="${escapeAttr(currentUser.email||'')}" disabled></div><div class="form-actions"><button id="save-profile" class="primary">Salvar perfil</button></div></div><div class="admin-panel"><h3>Alterar senha</h3><div class="form-grid"><input id="current-pass" type="password" placeholder="Senha atual"><input id="profile-new-pass" type="password" placeholder="Nova senha"><input id="profile-confirm-pass" type="password" placeholder="Confirmar nova senha"></div><div class="form-actions"><button id="change-pass" class="secondary">Alterar senha</button></div><p id="profile-pass-status" class="hint"></p></div>`;$('save-profile').onclick=saveProfile;$('change-pass').onclick=changePasswordFromProfile;$('profile-photo-save').onclick=async()=>{const st=$('profile-photo-status'),file=$('profile-photo-file').files?.[0];try{st.textContent='Enviando foto...';st.className='hint';await enviarFotoPerfil(file);st.textContent='Foto atualizada com sucesso.';st.className='hint success';setTimeout(()=>renderProfile(),350);}catch(e){console.error(e);st.textContent=e.message||'Não foi possível enviar a foto.';st.className='hint error';}};$('profile-photo-delete')?.addEventListener('click',async()=>{if(!confirm('Remover sua foto de perfil?'))return;const st=$('profile-photo-status');try{st.textContent='Removendo foto...';await excluirFotoPerfil();renderProfile();}catch(e){console.error(e);st.textContent=e.message||'Não foi possível remover a foto.';st.className='hint error';}});}
 async function saveProfile(){const nome=$('profile-name').value.trim(),funcao=$('profile-role').value.trim();try{await setDoc(doc(db,'usuarios',currentUser.uid),{nome,funcao,email:currentUser.email,atualizadoEm:serverTimestamp()},{merge:true});await updateProfile(currentUser,{displayName:nome}).catch(()=>{});currentUserData={...currentUserData,nome,funcao};saudacao.textContent='Olá, '+(nome||currentUser.email.split('@')[0])+'!';await refreshCaches();alert('Perfil atualizado com sucesso.');}catch(e){console.error(e);alert('Não foi possível salvar seu perfil.');}}
 async function changePasswordFromProfile(){const cur=$('current-pass').value,np=$('profile-new-pass').value,cp=$('profile-confirm-pass').value,st=$('profile-pass-status');if(np.length<6){st.textContent='A nova senha deve ter pelo menos 6 caracteres.';st.className='hint error';return;}if(np!==cp){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{const cred=EmailAuthProvider.credential(currentUser.email,cur);await reauthenticateWithCredential(currentUser,cred);await updatePassword(currentUser,np);st.textContent='Senha alterada com sucesso.';st.className='hint success';$('current-pass').value=$('profile-new-pass').value=$('profile-confirm-pass').value='';}catch{st.textContent='Não foi possível alterar. Confira sua senha atual.';st.className='hint error';}}
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.8').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.11').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
