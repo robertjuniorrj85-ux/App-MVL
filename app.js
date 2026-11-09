@@ -83,7 +83,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.12';
+const MVL_VERSION='11.4.13';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -426,46 +426,39 @@ function isRepertoireVisible(r,today=dateKey(new Date())){
 
 // REPERTÓRIO DETALHADO
 async function renderRepertoires(editItem=null){
-  showSectionHeader('Repertório','Abra um repertório para ver músicas, cantores, tons, cifras e links.');await refreshCaches();const allowed=canManage('repertorios');adminPanel.classList.toggle('hide',!allowed);
-  if(allowed){$('form-title').textContent=editItem?'Editar repertório':'Novo repertório';editingId=editItem?.id||null;cancelEditBtn.classList.toggle('hide',!editItem);saveBtn.textContent=editItem?'Atualizar':'Salvar';const d=editItem||{};dynamicForm.innerHTML=`<div class="form-grid">
-      <input id="rep-name" placeholder="Nome do repertório / Culto" value="${escapeAttr(d.nome||'')}">
-      <input id="rep-date" type="date" value="${escapeAttr(d.data||'')}">
-      <textarea id="rep-note" placeholder="Observações">${escapeHtml(d.observacoes||'')}</textarea>
-      <div class="subpanel"><b>Selecione as músicas</b><div class="multi-list" id="rep-song-options">${songsCache.length?songsCache.map(s=>`<label class="multi-item"><input class="rep-check" type="checkbox" value="${s.id}"> ${escapeHtml(s.titulo||'Sem título')}</label>`).join(''):'<span class="muted">Cadastre músicas primeiro.</span>'}</div><div id="rep-config-list" class="rep-config-list"></div></div>
-    </div>`;wireRepSelector(d.musicaItens||legacyRepItems(d));saveBtn.onclick=saveRepertoire;}
+  showSectionHeader('Repertório','Abra um repertório para ver músicas, cantores, tons, cifras e links.');
+  await refreshCaches();
+  const allowed=canManage('repertorios');adminPanel.classList.toggle('hide',!allowed);
+  if(allowed){
+    $('form-title').textContent=editItem?'Editar repertório':'Novo repertório';editingId=editItem?.id||null;cancelEditBtn.classList.toggle('hide',!editItem);saveBtn.textContent=editItem?'Atualizar':'Salvar';
+    const d=editItem||{};
+    dynamicForm.innerHTML='<div class="form-grid"><input id="rep-name" placeholder="Nome do repertório / Culto" value="'+escapeAttr(d.nome||'')+'"><input id="rep-date" type="date" value="'+escapeAttr(d.data||'')+'"><textarea id="rep-note" placeholder="Observações">'+escapeHtml(d.observacoes||'')+'</textarea><div class="subpanel"><b>Selecione as músicas</b><div class="multi-list" id="rep-song-options">'+(songsCache.length?songsCache.map(s=>'<label class="multi-item"><input class="rep-check" type="checkbox" value="'+escapeAttr(s.id)+'"> '+escapeHtml(s.titulo||'Sem título')+'</label>').join(''):'<span class="muted">Cadastre músicas primeiro.</span>')+'</div><div id="rep-config-list" class="rep-config-list"></div></div></div>';
+    wireRepSelector(d.musicaItens||legacyRepItems(d));saveBtn.onclick=saveRepertoire;
+  }
   addSearchBox('Pesquisar repertório...',filterCards);
-  const visibleRepertoires=repertoiresCache.filter(r=>isRepertoireVisible(r));
-  // V11.4.12: agrupamento derivado dos cantores atribuídos a cada música,
-  // sem depender do cantor global da escala e sem duplicar documentos.
+  const allRepertoires=repertoiresCache.slice();
+  const activeRepertoires=allRepertoires.filter(r=>isRepertoireVisible(r));
+  const archivedRepertoires=allRepertoires.filter(r=>!isRepertoireVisible(r));
   const repGroups=new Map();
-  for(const r of visibleRepertoires){
-    const items=r.musicaItens||legacyRepItems(r);
-    const singers=new Map();
-    for(const item of items){
-      const id=String(item.cantorId||'').trim();
-      const name=String(item.cantorNome||(id?userName(id):'')||'').trim();
-      if(!id&&!name)continue;
-      const key=id||`nome:${name.toLocaleLowerCase('pt-BR')}`;
-      if(!singers.has(key))singers.set(key,{id,name:name||'Cantor não identificado'});
-    }
-    for(const [key,singer] of singers){
-      if(!repGroups.has(key))repGroups.set(key,{...singer,repertoires:new Map()});
-      repGroups.get(key).repertoires.set(r.id,r);
-    }
+  for(const r of allRepertoires){
+    const items=r.musicaItens||legacyRepItems(r);const singers=new Map();
+    for(const item of items){const id=String(item.cantorId||'').trim();const name=String(item.cantorNome||(id?userName(id):'')||'').trim();if(!id&&!name)continue;const key=id||('nome:'+name.toLocaleLowerCase('pt-BR'));if(!singers.has(key))singers.set(key,{id,name:name||'Cantor não identificado'});}
+    for(const [key,singer] of singers){if(!repGroups.has(key))repGroups.set(key,{...singer,repertoires:new Map()});repGroups.get(key).repertoires.set(r.id,r);}
   }
   if(repGroups.size){
     const groups=[...repGroups.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
-    sectionSpecial.insertAdjacentHTML('beforeend',`<div class="rep-folders"><h3>Por cantor</h3>${groups.map(g=>{
-      const u=g.id?usersCache.find(x=>x.id===g.id):null;
-      const avatar=u?memberAvatarHtml(u,'rep-singer-avatar'):'<span class="rep-singer-avatar avatar-fallback">🎤</span>';
-      const reps=[...g.repertoires.values()].sort((a,b)=>(b.data||'').localeCompare(a.data||''));
-      return `<details class="rep-singer-folder"><summary>${avatar}<span class="rep-singer-name">${escapeHtml(g.name)}</span><span class="rep-singer-count">${reps.length}</span></summary>${reps.map(r=>`<button class="rep-derived-link" data-rep="${escapeAttr(r.id)}">📅 ${escapeHtml(dateBR(r.data||''))} • ${escapeHtml(r.nome||'Repertório')}</button>`).join('')}</details>`;
-    }).join('')}</div>`);
+    sectionSpecial.insertAdjacentHTML('beforeend','<div class="rep-folders"><h3>Por cantor</h3>'+groups.map(g=>{
+      const u=g.id?usersCache.find(x=>x.id===g.id):null;const avatar=u?memberAvatarHtml(u,'rep-singer-avatar'):'<span class="rep-singer-avatar avatar-fallback">🎤</span>';
+      const reps=[...g.repertoires.values()].sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
+      return '<details class="rep-singer-folder"><summary>'+avatar+'<span class="rep-singer-name">'+escapeHtml(g.name)+'</span><span class="rep-singer-count">'+reps.length+'</span></summary>'+reps.map(r=>'<button class="rep-derived-link" data-rep="'+escapeAttr(r.id)+'">📅 '+escapeHtml(dateBR(r.data||''))+' • '+escapeHtml(r.nome||'Repertório')+(isRepertoireVisible(r)?'':' • Anterior')+'</button>').join('')+'</details>';
+    }).join('')+'</div>');
     sectionSpecial.querySelectorAll('.rep-derived-link').forEach(b=>b.onclick=()=>openRepertoireDetail(b.dataset.rep,'repertorio'));
   }
-  listEl.innerHTML='';if(!visibleRepertoires.length){listEl.innerHTML='<div class="empty">Nenhum repertório cadastrado.</div>';return;}
-  visibleRepertoires.sort((a,b)=>(b.data||'').localeCompare(a.data||''));
-  for(const r of visibleRepertoires){const card=document.createElement('div');card.className='item-card';const count=(r.musicaItens||legacyRepItems(r)).length;card.innerHTML=`<h3>🎵 ${escapeHtml(r.nome||'Repertório')}</h3><div class="item-meta">${dateBR(r.data)}</div><div class="item-meta">${count} música${count===1?'':'s'}</div><div class="item-actions"><button class="confirm-btn open-rep">Abrir repertório</button>${allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':''}</div>`;card.querySelector('.open-rep').onclick=()=>openRepertoireDetail(r.id,'repertorio');if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderRepertoires(r);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir repertório?')){await deleteDoc(doc(db,'repertorios',r.id));await refreshCaches();renderRepertoires();}};}listEl.appendChild(card);}
+  listEl.innerHTML='';
+  const makeCard=r=>{const card=document.createElement('div');card.className='item-card';const count=(r.musicaItens||legacyRepItems(r)).length;card.innerHTML='<h3>🎵 '+escapeHtml(r.nome||'Repertório')+'</h3><div class="item-meta">'+escapeHtml(dateBR(r.data||''))+'</div><div class="item-meta">'+count+' música'+(count===1?'':'s')+'</div><div class="item-actions"><button class="confirm-btn open-rep">Abrir repertório</button>'+(allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':'')+'</div>';card.querySelector('.open-rep').onclick=()=>openRepertoireDetail(r.id,'repertorio');if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderRepertoires(r);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir repertório?')){await deleteDoc(doc(db,'repertorios',r.id));await refreshCaches();renderRepertoires();}};}return card;};
+  activeRepertoires.sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));archivedRepertoires.sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
+  if(activeRepertoires.length)activeRepertoires.forEach(r=>listEl.appendChild(makeCard(r)));else{const empty=document.createElement('div');empty.className='empty';empty.textContent='Nenhum repertório atual ou futuro.';listEl.appendChild(empty);}
+  if(archivedRepertoires.length){const archive=document.createElement('details');archive.className='rep-archive';const summary=document.createElement('summary');summary.textContent='Repertórios anteriores ('+archivedRepertoires.length+')';archive.appendChild(summary);const contents=document.createElement('div');contents.className='rep-archive-list';archivedRepertoires.forEach(r=>contents.appendChild(makeCard(r)));archive.appendChild(contents);listEl.appendChild(archive);}
 }
 function legacyRepItems(r){return (r.musicaIds||[]).map((id,i)=>{const s=songById(id)||{};return {musicaId:id,cantorId:'',cantorNome:'',tom:s.tomOriginal||s.tom||'',cifraLink:s.cifraLink||'',ouvirLink:s.ouvirLink||s.link||'',multitrackLink:s.multitrackLink||'',ordem:i+1};});}
 function wireRepSelector(existing=[]){
@@ -1078,7 +1071,7 @@ async function requestNotifications(){
   }
 }
 async function renderNotifications(){
-  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.12: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
+  showSectionHeader('Notificações','Avisos recebidos pelo MVL.');adminPanel.classList.add('hide');sectionSpecial.innerHTML=`<div class="admin-panel"><h3>Notificações do dispositivo</h3><p class="muted">Ative o Web Push do OneSignal neste aparelho.</p><button id="enable-notif" class="secondary">Permitir notificações</button><p class="hint">MVL V11.4.13: o aparelho é vinculado com segurança ao seu usuário para receber os avisos externos.</p></div>`;$('enable-notif').onclick=requestNotifications;const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));let items=[];try{const snap=await getDocs(q);items=snap.docs.map(d=>({id:d.id,...d.data()})).sort(byCreatedDesc);}catch(e){console.error(e);}listEl.innerHTML='';if(!items.length){listEl.innerHTML='<div class="empty">Nenhuma notificação.</div>';return;}items.forEach(n=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`${!n.lida?'<span class="status-pill new">Nova</span>':''}<h3>${escapeHtml(n.titulo||'MVL')}</h3><div class="item-meta">${escapeHtml(n.mensagem||'')}</div><div class="item-actions"><button class="confirm-btn notif-open">Abrir</button>${!n.lida?'<button class="edit-btn">Marcar como lida</button>':''}</div>`;card.querySelector('.notif-open')?.addEventListener('click',()=>openNotificationTarget(n));card.querySelector('.edit-btn')?.addEventListener('click',async()=>{await updateDoc(doc(db,'notificacoes',n.id),{lida:true,lidaEm:serverTimestamp()});renderNotifications();});listEl.appendChild(card);});
 }
 
 // MEMBROS E PERFIL
@@ -1274,4 +1267,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.12').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.13').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
