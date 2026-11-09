@@ -410,17 +410,22 @@ async function saveSong(){
   saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'musicas',editingId),{...data,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});else await addDoc(collection(db,'musicas'),{...data,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});editingId=null;await refreshCaches();renderSongs();}catch(e){console.error(e);alert('Não foi possível salvar a música.');}finally{saveBtn.disabled=false;}
 }
 
-// Oculta repertórios com data anterior ao dia local atual, sem remover documentos.
-function isRepertoireVisible(r,today=dateKey(new Date())){
+// Usa exclusivamente o campo "data" do formulário para classificar o repertório.
+function repertoireDateKey(r){
   let value=r?.data;
   if(value&&typeof value.toDate==='function')value=value.toDate();
-  let normalized='';
-  if(value instanceof Date&&!Number.isNaN(value.getTime()))normalized=dateKey(value);
-  else {
-    const raw=String(value??'').trim();
-    if(/^\d{4}-\d{2}-\d{2}/.test(raw))normalized=raw.slice(0,10);
-    else {const br=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);if(br)normalized=br[3]+'-'+br[2]+'-'+br[1];}
-  }
+  if(value instanceof Date&&!Number.isNaN(value.getTime()))return dateKey(value);
+  const raw=String(value??'').trim();
+  if(/^\d{4}-\d{2}-\d{2}/.test(raw))return raw.slice(0,10);
+  const br=raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  return br?br[3]+'-'+br[2]+'-'+br[1]:'';
+}
+function repertoireDateLabel(r){
+  const key=repertoireDateKey(r);
+  return key?dateBR(key):String(r?.data??'').trim();
+}
+function isRepertoireVisible(r,today=dateKey(new Date())){
+  const normalized=repertoireDateKey(r);
   return !normalized||normalized>=today;
 }
 
@@ -436,7 +441,7 @@ async function renderRepertoires(editItem=null){
     wireRepSelector(d.musicaItens||legacyRepItems(d));saveBtn.onclick=saveRepertoire;
   }
   addSearchBox('Pesquisar repertório...',filterCards);
-  const allRepertoires=repertoiresCache.slice();
+  const allRepertoires=repertoiresCache.filter(r=>r&&r.id);
   const activeRepertoires=allRepertoires.filter(r=>isRepertoireVisible(r));
   const archivedRepertoires=allRepertoires.filter(r=>!isRepertoireVisible(r));
   const repGroups=new Map();
@@ -449,17 +454,22 @@ async function renderRepertoires(editItem=null){
     const groups=[...repGroups.values()].sort((a,b)=>a.name.localeCompare(b.name,'pt-BR'));
     sectionSpecial.insertAdjacentHTML('beforeend','<div class="rep-folders"><h3>Por cantor</h3>'+groups.map(g=>{
       const u=g.id?usersCache.find(x=>x.id===g.id):null;const avatar=u?memberAvatarHtml(u,'rep-singer-avatar'):'<span class="rep-singer-avatar avatar-fallback">🎤</span>';
-      const reps=[...g.repertoires.values()].sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
-      return '<details class="rep-singer-folder"><summary>'+avatar+'<span class="rep-singer-name">'+escapeHtml(g.name)+'</span><span class="rep-singer-count">'+reps.length+'</span></summary>'+reps.map(r=>'<button class="rep-derived-link" data-rep="'+escapeAttr(r.id)+'">📅 '+escapeHtml(dateBR(r.data||''))+' • '+escapeHtml(r.nome||'Repertório')+(isRepertoireVisible(r)?'':' • Anterior')+'</button>').join('')+'</details>';
+      const reps=[...g.repertoires.values()].sort((a,b)=>repertoireDateKey(b).localeCompare(repertoireDateKey(a)));
+      return '<details class="rep-singer-folder"><summary>'+avatar+'<span class="rep-singer-name">'+escapeHtml(g.name)+'</span><span class="rep-singer-count">'+reps.length+'</span></summary>'+reps.map(r=>'<button class="rep-derived-link" data-rep="'+escapeAttr(r.id)+'">📅 '+escapeHtml(repertoireDateLabel(r)||'Sem data')+' • '+escapeHtml(r.nome||'Repertório')+(isRepertoireVisible(r)?'':' • Anterior')+'</button>').join('')+'</details>';
     }).join('')+'</div>');
     sectionSpecial.querySelectorAll('.rep-derived-link').forEach(b=>b.onclick=()=>openRepertoireDetail(b.dataset.rep,'repertorio'));
   }
   listEl.innerHTML='';
-  const makeCard=r=>{const card=document.createElement('div');card.className='item-card';const count=(r.musicaItens||legacyRepItems(r)).length;card.innerHTML='<h3>🎵 '+escapeHtml(r.nome||'Repertório')+'</h3><div class="item-meta">'+escapeHtml(dateBR(r.data||''))+'</div><div class="item-meta">'+count+' música'+(count===1?'':'s')+'</div><div class="item-actions"><button class="confirm-btn open-rep">Abrir repertório</button>'+(allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':'')+'</div>';card.querySelector('.open-rep').onclick=()=>openRepertoireDetail(r.id,'repertorio');if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderRepertoires(r);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir repertório?')){await deleteDoc(doc(db,'repertorios',r.id));await refreshCaches();renderRepertoires();}};}return card;};
-  activeRepertoires.sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));archivedRepertoires.sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')));
+  const makeCard=r=>{const card=document.createElement('div');card.className='item-card';const count=(r.musicaItens||legacyRepItems(r)).length;card.innerHTML='<h3>🎵 '+escapeHtml(r.nome||'Repertório')+'</h3><div class="item-meta">'+escapeHtml(repertoireDateLabel(r)||'Sem data')+'</div><div class="item-meta">'+count+' música'+(count===1?'':'s')+'</div><div class="item-actions"><button class="confirm-btn open-rep">Abrir repertório</button>'+(allowed?'<button class="edit-btn">Editar</button><button class="delete-btn">Excluir</button>':'')+'</div>';card.querySelector('.open-rep').onclick=()=>openRepertoireDetail(r.id,'repertorio');if(allowed){card.querySelector('.edit-btn').onclick=()=>{renderRepertoires(r);scrollToAdminForm();};card.querySelector('.delete-btn').onclick=async()=>{if(confirm('Excluir repertório?')){await deleteDoc(doc(db,'repertorios',r.id));await refreshCaches();renderRepertoires();}};}return card;};
+  const byRepertoireDate=(a,b)=>repertoireDateKey(b).localeCompare(repertoireDateKey(a))||String(b.nome||'').localeCompare(String(a.nome||''));
+  activeRepertoires.sort(byRepertoireDate);archivedRepertoires.sort(byRepertoireDate);
+  const total=document.createElement('p');total.className='rep-total-count';total.textContent='Histórico completo: '+allRepertoires.length+' repertório'+(allRepertoires.length===1?'':'s')+'.';listEl.appendChild(total);
   if(activeRepertoires.length)activeRepertoires.forEach(r=>listEl.appendChild(makeCard(r)));else{const empty=document.createElement('div');empty.className='empty';empty.textContent='Nenhum repertório atual ou futuro.';listEl.appendChild(empty);}
-  if(archivedRepertoires.length){const archive=document.createElement('details');archive.className='rep-archive';const summary=document.createElement('summary');summary.textContent='Repertórios anteriores ('+archivedRepertoires.length+')';archive.appendChild(summary);const contents=document.createElement('div');contents.className='rep-archive-list';archivedRepertoires.forEach(r=>contents.appendChild(makeCard(r)));archive.appendChild(contents);listEl.appendChild(archive);}
-}
+  if(archivedRepertoires.length){
+    const archive=document.createElement('section');archive.className='rep-archive';
+    const heading=document.createElement('h3');heading.className='rep-archive-title';heading.textContent='Repertórios anteriores ('+archivedRepertoires.length+')';archive.appendChild(heading);
+    const contents=document.createElement('div');contents.className='rep-archive-list';archivedRepertoires.forEach(r=>contents.appendChild(makeCard(r)));archive.appendChild(contents);listEl.appendChild(archive);
+  }
 function legacyRepItems(r){return (r.musicaIds||[]).map((id,i)=>{const s=songById(id)||{};return {musicaId:id,cantorId:'',cantorNome:'',tom:s.tomOriginal||s.tom||'',cifraLink:s.cifraLink||'',ouvirLink:s.ouvirLink||s.link||'',multitrackLink:s.multitrackLink||'',ordem:i+1};});}
 function wireRepSelector(existing=[]){
   const existingMap=new Map(existing.map(i=>[i.musicaId,i]));document.querySelectorAll('.rep-check').forEach(ch=>{if(existingMap.has(ch.value))ch.checked=true;ch.onchange=renderRepConfigs;});renderRepConfigs(existingMap);
