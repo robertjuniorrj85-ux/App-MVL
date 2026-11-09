@@ -478,7 +478,7 @@ async function renderRepertoires(editItem=null){
     sectionSpecial.insertAdjacentHTML('beforeend','<div class="rep-folders"><h3>Por cantor</h3>'+groups.map(g=>{
       const u=g.id?usersCache.find(x=>x.id===g.id):null;const avatar=u?memberAvatarHtml(u,'rep-singer-avatar'):'<span class="rep-singer-avatar avatar-fallback">🎤</span>';
       const reps=[...g.repertoires.values()].sort((a,b)=>repertoireDateKey(b).localeCompare(repertoireDateKey(a)));
-      const current=reps.filter(isRepertoireVisible),previous=reps.filter(r=>!isRepertoireVisible(r));
+      const current=reps.filter(r=>isRepertoireVisible(r)),previous=reps.filter(r=>!isRepertoireVisible(r));
       const links=list=>list.map(r=>'<button class="rep-derived-link" data-rep="'+escapeAttr(r.id)+'">📅 '+escapeHtml(repertoireDateLabel(r)||'Sem data')+' • '+escapeHtml(r.nome||'Repertório')+'</button>').join('');
       const previousSection=previous.length?'<details class="rep-singer-archive"><summary>Repertórios anteriores ('+previous.length+')</summary>'+links(previous)+'</details>':'';
       return '<details class="rep-singer-folder"><summary>'+avatar+'<span class="rep-singer-name">'+escapeHtml(g.name)+'</span><span class="rep-singer-count">'+reps.length+'</span></summary><div class="rep-singer-current">'+links(current)+'</div>'+previousSection+'</details>';
