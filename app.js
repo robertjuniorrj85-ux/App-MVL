@@ -470,6 +470,8 @@ async function renderRepertoires(editItem=null){
     const heading=document.createElement('h3');heading.className='rep-archive-title';heading.textContent='Repertórios anteriores ('+archivedRepertoires.length+')';archive.appendChild(heading);
     const contents=document.createElement('div');contents.className='rep-archive-list';archivedRepertoires.forEach(r=>contents.appendChild(makeCard(r)));archive.appendChild(contents);listEl.appendChild(archive);
   }
+}
+
 function legacyRepItems(r){return (r.musicaIds||[]).map((id,i)=>{const s=songById(id)||{};return {musicaId:id,cantorId:'',cantorNome:'',tom:s.tomOriginal||s.tom||'',cifraLink:s.cifraLink||'',ouvirLink:s.ouvirLink||s.link||'',multitrackLink:s.multitrackLink||'',ordem:i+1};});}
 function wireRepSelector(existing=[]){
   const existingMap=new Map(existing.map(i=>[i.musicaId,i]));document.querySelectorAll('.rep-check').forEach(ch=>{if(existingMap.has(ch.value))ch.checked=true;ch.onchange=renderRepConfigs;});renderRepConfigs(existingMap);
