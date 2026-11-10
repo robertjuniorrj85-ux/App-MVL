@@ -616,6 +616,39 @@ async function syncScaleEncounterParticipants(scaleId,encontros){
     await deleteDoc(oldEncounter.ref);
   }
 }
+async function migrateLegacyScaleConfirmations(scale){
+  if(!canManage('escalas')||!scale?.id)return;
+  const legacy=await getDocs(collection(db,'escalas',scale.id,'confirmacoes'));
+  if(legacy.empty)return;
+  const encounters=scaleEncounters(scale);
+  const legacyByUid=new Map(legacy.docs.map(snap=>[snap.id,snap.data()||{}]));
+  for(const encounter of encounters){
+    if(!encounter?.id)continue;
+    const encounterId=String(encounter.id);
+    const target=collection(db,'escalas',scale.id,'encontros',encounterId,'confirmacoes');
+    const current=await getDocs(target);
+    const existing=new Set(current.docs.map(snap=>snap.id));
+    let batch=writeBatch(db),count=0;
+    for(const [uid,old] of legacyByUid){
+      if(existing.has(uid))continue;
+      const answers=old.encontros&&typeof old.encontros==='object'&&!Array.isArray(old.encontros)?old.encontros:{};
+      const status=answers[encounterId]||(old.encontroId===encounterId?old.status:(!Object.keys(answers).length&&encounter.principal?old.status:''));
+      if(!['confirmado','nao_posso'].includes(status))continue;
+      batch.set(doc(target,uid),{
+        usuarioId:uid,
+        usuarioNome:String(old.usuarioNome||''),
+        escalaId:scale.id,
+        encontroId:encounterId,
+        status,
+        atualizadoEm:old.atualizadoEm||serverTimestamp()
+      });
+      existing.add(uid);
+      count++;
+      if(count===450){await batch.commit();batch=writeBatch(db);count=0;}
+    }
+    if(count)await batch.commit();
+  }
+}
 function principalEncounter(s={}){const es=scaleEncounters(s);return es.find(e=>e.principal)||es.slice().sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).at(-1)||null;}
 function encounterDateTime(e={}){return (e.data||'')+'T'+(e.horario||'23:59');}
 function nextEncounterOfScale(s={},today=dateKey(new Date())){return scaleEncounters(s).filter(e=>e.data&&e.data>=today).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)))[0]||null;}
@@ -645,7 +678,7 @@ function validateEncounters(es){
 }
 async function renderScales(editItem=null){
   showSectionHeader('Escalas','Uma escala, vários encontros: ensaio vocal, ensaio geral, culto e outros.');await refreshCaches();const allowed=canManage('escalas');
-  if(allowed){for(const s of scalesCache){try{await syncScaleEncounterParticipants(s.id,scaleEncounters(s));}catch(e){console.warn('Migração de participantes por encontro pendente',s.id,e);}}}adminPanel.classList.toggle('hide',!allowed);
+  if(allowed){for(const s of scalesCache){try{await syncScaleEncounterParticipants(s.id,scaleEncounters(s));await migrateLegacyScaleConfirmations(s);}catch(e){console.warn('Migração de vínculos/confirmações por encontro pendente',s.id,e);}}}adminPanel.classList.toggle('hide',!allowed);
   if(allowed){
     $('form-title').textContent=editItem?'Editar escala':'Nova escala';editingId=editItem?.id||null;cancelEditBtn.classList.toggle('hide',!editItem);saveBtn.textContent=editItem?'Atualizar':'Salvar';const d=editItem||{};
     dynamicForm.innerHTML=`<div class="form-grid"><input id="scale-event" placeholder="Culto / Evento" value="${escapeAttr(d.evento||'')}"><label class="field-label">Equipe responsável<select id="scale-team"><option value="mvl" ${scaleTeam(d)==='mvl'?'selected':''}>MVL</option><option value="nova_geracao" ${scaleTeam(d)==='nova_geracao'?'selected':''}>⚡ Nova Geração</option></select></label><select id="scale-singer"><option value="">Selecione o cantor da escala</option>${sortedUsersForTeam(scaleTeam(d)).map(u=>`<option value="${u.id}" ${d.cantorId===u.id?'selected':''}>${memberIcon(u)} ${escapeHtml(u.nome||u.email||u.id)} — ${memberTeams(u).map(t=>t==='nova_geracao'?'Nova Geração':'MVL').join(' + ')}</option>`).join('')}</select><select id="scale-rep"><option value="">Sem repertório vinculado</option>${repertoiresCache.map(r=>`<option value="${r.id}" ${d.repertorioId===r.id?'selected':''}>${escapeHtml(r.nome||'Repertório')}</option>`).join('')}</select><label class="checkbox-row"><input id="notify-scaled" type="checkbox" ${editItem?'':'checked'}><span><b>Notificar participantes ao salvar</b><br><small class="muted">Envia o aviso sem interferir no salvamento da escala.</small></span></label><div class="subpanel encounters-panel"><div class="subpanel-head"><div><b>📅 Encontros desta escala</b><small class="muted block">Cada encontro tem data, horário, participantes, confirmação e alertas próprios.</small></div><button id="add-encounter" type="button" class="secondary small-btn">+ Adicionar encontro</button></div><div id="encounter-list"></div></div></div>`;
@@ -692,7 +725,7 @@ async function saveScale(){
   if(notifyNow&&integranteIds.length){const tituloEscala=equipeResponsavel==='nova_geracao'?'⚡ Nova escala Nova Geração':'🎵 Nova escala MVL';const escalaUrl=`https://robertjuniorrj85-ux.github.io/App-MVL/?open=escala&id=${encodeURIComponent(scaleId)}`;createNotifications(integranteIds,tituloEscala,texto,'escala',scaleId).catch(e=>console.error('Notificação interna da escala',e));enviarPushMVL('escala',tituloEscala,texto,integranteIds,escalaUrl).catch(e=>console.error('Push da escala',e));}
   syncScaleReminder({id:scaleId,...payload}).catch(e=>console.error('Sincronização de encontros/alertas',e));
 }
-async function syncAllScheduledData(){if(!canManage('escalas')&&!canManage('membros'))return;await syncBirthdaysForPush();for(const scale of scalesCache){await syncScaleReminder(scale);try{const snap=await getDocs(collection(db,'escalas',scale.id,'confirmacoes'));for(const d of snap.docs){const x=d.data();if(x?.usuarioId)await syncScaleConfirmationAsAdmin(scale.id,x.usuarioId,x.encontros||{},x.status||'');}}catch(e){console.warn('Confirmações para lembretes',scale.id,e);}}}
+async function syncAllScheduledData(){if(!canManage('escalas')&&!canManage('membros'))return;await syncBirthdaysForPush();for(const scale of scalesCache){await syncScaleReminder(scale);try{const byUser=new Map();const legacy=await getDocs(collection(db,'escalas',scale.id,'confirmacoes'));legacy.forEach(d=>{const x=d.data()||{};if(x?.usuarioId)byUser.set(x.usuarioId,{encontros:{...(x.encontros||{})},status:x.status||''});});for(const enc of scaleEncounters(scale)){if(!enc?.id)continue;const snap=await getDocs(collection(db,'escalas',scale.id,'encontros',String(enc.id),'confirmacoes'));snap.forEach(d=>{const x=d.data()||{},uid=x.usuarioId||d.id;const current=byUser.get(uid)||{encontros:{},status:''};current.encontros[String(enc.id)]=x.status||'';byUser.set(uid,current);});}for(const [uid,x] of byUser)await syncScaleConfirmationAsAdmin(scale.id,uid,x.encontros,x.status);}catch(e){console.warn('Confirmações para lembretes',scale.id,e);}}}
 async function syncScaleConfirmationAsAdmin(scaleId,usuarioId,encontros,status=''){if(!canManage('escalas'))return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync_admin',escalaId:scaleId,usuarioId,encontros,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
 async function syncScaleReminder(scale){if(!canManage('escalas')||!scale?.id)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_sync',escala:{id:scale.id,evento:scale.evento||'Escala',cantorNome:scaleSingerName(scale),integranteIds:scaleParticipants(scale),encontros:scaleEncounters(scale)}})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('escala_sync',e);return false;}}
 async function syncScaleDelete(scaleId){if(!canManage('escalas')||!scaleId)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_delete',escalaId})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
@@ -747,11 +780,19 @@ async function syncScaleMembersConfirmationPush(escalaId,encontroId,respostaStat
     return {ok:false,pushAceito:false,erro:String(e)};
   }
 }
-async function getScaleConfirmations(s){
-  // A confirmação pertence ao encontro, mas fica armazenada por integrante na escala.
-  // Consulta de leitura; a regra do Firestore limita o acesso aos participantes e gestores.
-  const snap=await getDocs(collection(db,'escalas',s.id,'confirmacoes'));
-  const byUser={};snap.forEach(d=>{byUser[d.id]=d.data()||{};});
+async function getScaleConfirmations(s,encounters=scaleEncounters(s)){
+  const byUser={};
+  const allowed=canManage('escalas')
+    ? encounters
+    : encounters.filter(enc=>(enc.integranteIds||[]).includes(currentUser.uid));
+  for(const enc of allowed){
+    const snap=await getDocs(collection(db,'escalas',s.id,'encontros',String(enc.id),'confirmacoes'));
+    snap.forEach(d=>{
+      const data=d.data()||{},uid=data.usuarioId||d.id;
+      byUser[uid]||={usuarioId:uid,encontros:{}};
+      byUser[uid].encontros[String(enc.id)]=data.status||'';
+    });
+  }
   return byUser;
 }
 function encounterStatusHtml(st){return st==='confirmado'?'<span class="status-pill ok">Confirmado</span>':st==='nao_posso'?'<span class="status-pill no">Não poderei</span>':'<span class="status-pill">Aguardando</span>';}
@@ -761,8 +802,9 @@ async function buildScaleCard(s){
   let confirmations={},confirmationLoadError=false;
   try{confirmations=await getScaleConfirmations(s);}catch(err){console.error('Não foi possível consultar confirmações da escala',s.id,err);confirmationLoadError=true;}
   const mine=confirmations[currentUser.uid]||{};let repHtml='';
+  const visibleEncounters=manageScale?es:es.filter(e=>(e.integranteIds||[]).includes(currentUser.uid));
   if(rep){const itens=(rep.musicaItens||legacyRepItems(rep)).sort((a,b)=>(a.ordem||0)-(b.ordem||0));repHtml=`<div class="scale-repertoire"><b>🎵 REPERTÓRIO</b>${itens.slice(0,8).map((it,i)=>{const song=songById(it.musicaId)||{},rr=resolvedSong(it.musicaId,s.cantorId||'',it);return `<button class="scale-song">${i+1}. ${escapeHtml(song.titulo||'Música')} <small>${escapeHtml(rr.tom||'')}</small></button>`;}).join('')}<button class="confirm-btn rep-btn">Abrir repertório completo</button></div>`;}
-  const encountersHtml=es.map(e=>{
+  const encountersHtml=visibleEncounters.map(e=>{
     const st=mine.encontros?.[e.id]||(e.id==='principal'?mine.status:'');
     const involved=(e.integranteIds||[]).includes(currentUser.uid);
     const participantRows=(e.integranteIds||[]).map(uid=>{
@@ -786,6 +828,8 @@ async function deleteScaleCascade(scaleId){
     if(!enc?.id)continue;
     const participants=await getDocs(collection(db,'escalas',scaleId,'encontros',String(enc.id),'participantes')).catch(()=>null);
     participants?.docs.forEach(d=>ops.push({kind:'delete',ref:d.ref}));
+    const encounterConfirmations=await getDocs(collection(db,'escalas',scaleId,'encontros',String(enc.id),'confirmacoes')).catch(()=>null);
+    encounterConfirmations?.docs.forEach(d=>ops.push({kind:'delete',ref:d.ref}));
     ops.push({kind:'delete',ref:doc(db,'escalas',scaleId,'encontros',String(enc.id))});
   }
   ops.push({kind:'delete',ref:doc(db,'escalas',scaleId)});
@@ -797,48 +841,45 @@ async function deleteScaleCascade(scaleId){
   syncScaleDelete(scaleId).catch(()=>{});
 }
 async function setEncounterConfirmation(scale,encounterId,status){
-  let data={};
+  const encounterKey=String(encounterId);
+  const enc=scaleEncounters(scale).find(e=>String(e.id)===encounterKey);
+  if(!enc||(enc.integranteIds||[]).indexOf(currentUser.uid)<0){
+    alert('Não foi possível registrar sua resposta. Você não participa deste encontro.');
+    return false;
+  }
+  if(!['confirmado','nao_posso'].includes(status)){
+    alert('Resposta de encontro inválida.');
+    return false;
+  }
+  const data={encontros:{[encounterKey]:status}};
   try{
-    const ref=doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid);
-    const old=await getDoc(ref);
-    data=old.exists()?old.data():{};
-    const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
-    if(!enc||(enc.integranteIds||[]).indexOf(currentUser.uid)<0)throw new Error('Usuário não pertence a este encontro.');
-    const encontros={...(data.encontros||{}),[encounterId]:status};
+    const ref=doc(db,'escalas',scale.id,'encontros',encounterKey,'confirmacoes',currentUser.uid);
     await setDoc(ref,{
       usuarioId:currentUser.uid,
       usuarioNome:currentUserData.nome||currentUser.email,
-      encontroId:String(encounterId),
+      escalaId:scale.id,
+      encontroId:encounterKey,
       status,
-      encontros,
       atualizadoEm:serverTimestamp()
     },{merge:true});
-    data.encontros=encontros;
   }catch(e){
     console.error('Falha ao gravar confirmação no Firestore:',e);
     alert('Não foi possível registrar sua resposta. Verifique sua conexão e tente novamente.');
     return false;
   }
 
-  // A confirmação já está persistida. Falhas nas notificações não devem desfazer
-  // nem mascarar o registro principal.
-  const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
   const nome=currentUserData.nome||currentUser.email;
   const texto=`${nome} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;
-  // Resposta de integrante: notificação interna somente aos demais participantes
-  // deste encontro. Administradores seguem no fluxo administrativo separado.
   const admins=adminIdsFor('escalas');
-  // Administradores (inclusive limitados) não recebem o fluxo de integrantes,
-  // mesmo que estejam cadastrados por engano como participantes do encontro.
   const adminUids=new Set(usersCache
     .filter(user=>user.role==='admin'||user.role==='admin_limited')
     .map(user=>user.id));
-  const destinatarios=[...new Set((enc?.integranteIds||[])
+  const destinatarios=[...new Set((enc.integranteIds||[])
     .filter(id=>typeof id==='string'&&id&&id!==currentUser.uid&&!adminUids.has(id)))];
 
   let notificacaoInternaOk=true;
   try{
-    await createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId:encounterId});
+    await createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId:encounterKey});
   }catch(e){
     notificacaoInternaOk=false;
     console.error('Falha ao criar notificações internas da confirmação:',e);
@@ -846,22 +887,19 @@ async function setEncounterConfirmation(scale,encounterId,status){
 
   let sincronizacao={registroOk:false,pushAceito:false,erro:'Não foi possível consultar o serviço de notificações.'};
   try{
-    sincronizacao=await syncScaleConfirmation(scale.id,data.encontros||{},encounterId,status);
+    sincronizacao=await syncScaleConfirmation(scale.id,data.encontros,encounterKey,status);
   }catch(e){
     sincronizacao={registroOk:false,pushAceito:false,erro:String(e)};
     console.error('Falha ao sincronizar confirmação com o Apps Script:',e);
   }
 
-  // Fluxo independente: notifica somente os demais integrantes deste encontro.
   let pushIntegrantes={ok:false,pushAceito:false,erro:'Notificação dos integrantes não confirmada.'};
   try{
-    pushIntegrantes=await syncScaleMembersConfirmationPush(scale.id,encounterId,status,nome);
+    pushIntegrantes=await syncScaleMembersConfirmationPush(scale.id,encounterKey,status,nome);
   }catch(e){
     console.error('Falha no push dos integrantes:',e);
   }
 
-  // Mantém o fluxo administrativo original, separado do aviso aos integrantes.
-  // O Apps Script determina os administradores autorizados e exclui o remetente.
   let pushFallbackOk=true;
   if(!sincronizacao?.pushAceito&&admins.length){
     pushFallbackOk=await enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins);
