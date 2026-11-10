@@ -612,7 +612,8 @@ case 'usuario_excluir': {
         const escalaId = String(body.escalaId || '');
         const encontroId = String(body.encontroId || '');
         const respostaStatus = String(body.respostaStatus || '');
-        if (!escalaId || !encontroId ||
+        const nomeIntegrante = String(body.nomeIntegrante || '').trim().replace(/[\\r\\n\\t]+/g, ' ').substring(0, 80);
+        if (!escalaId || !encontroId || !nomeIntegrante ||
             !['confirmado', 'nao_posso'].includes(respostaStatus)) {
           return jsonResponse({ok:false, erro:'Dados da notificação de confirmação inválidos.'});
         }
@@ -644,8 +645,8 @@ case 'usuario_excluir': {
         }
         const nomeEncontro = String(encontro.nome || escala.evento || 'encontro da escala').substring(0,150);
         mensagem = respostaStatus === 'confirmado'
-          ? 'Um integrante confirmou presença em ' + nomeEncontro + '.'
-          : 'Um integrante informou que não poderá participar de ' + nomeEncontro + '.';
+          ? nomeIntegrante + ' confirmou presença em ' + nomeEncontro + '.'
+          : nomeIntegrante + ' informou que não poderá participar de ' + nomeEncontro + '.';
         const resultadoPush = enviarPushSubscriptionsMVL_(
           destinatarios, 'Resposta de escala', mensagem,
           'https://robertjuniorrj85-ux.github.io/App-MVL/'
