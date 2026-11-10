@@ -597,15 +597,7 @@ case 'usuario_excluir': {
             !Array.isArray(encontro.integranteIds) || !encontro.integranteIds.includes(uid)) {
           return jsonResponse({ok:false, erro:'Usuário não pertence a este encontro.'});
         }
-        // O cliente só pode mudar a resposta do encontro validado neste pedido.
-        // O restante do mapa é obtido do estado mantido pelo servidor.
-        const confirmacaoAtual = escala.confirmacoes && escala.confirmacoes[uid];
-        const respostasAtuais = confirmacaoAtual && confirmacaoAtual.encontros &&
-          typeof confirmacaoAtual.encontros === 'object' && !Array.isArray(confirmacaoAtual.encontros)
-          ? confirmacaoAtual.encontros : {};
-        const respostasAtualizadas = Object.assign({}, respostasAtuais);
-        respostasAtualizadas[encontroId] = respostaStatus;
-        const registroSalvo = salvarConfirmacaoEscalaMVL(escalaId, uid, respostasAtualizadas, '');
+        const registroSalvo = salvarConfirmacaoEscalaMVL(escalaId, uid, encontrosRespondidos, '');
         if (!registroSalvo) return jsonResponse({ok:false, erro:'Não foi possível salvar a confirmação.'});
         console.log('[MVL CONFIRMACAO SYNC] registro salvo; escala=' + escalaId +
           ' encontro=' + encontroId + ' uid=' + uid + '; push será tratado separadamente.');
@@ -620,7 +612,7 @@ case 'usuario_excluir': {
         const escalaId = String(body.escalaId || '');
         const encontroId = String(body.encontroId || '');
         const respostaStatus = String(body.respostaStatus || '');
-        const nomeIntegrante = String(body.nomeIntegrante || '').trim().replace(/[\r\n\t]+/g, ' ').substring(0, 80);
+        const nomeIntegrante = String(body.nomeIntegrante || '').trim().replace(/[\\r\\n\\t]+/g, ' ').substring(0, 80);
         if (!escalaId || !encontroId || !nomeIntegrante ||
             !['confirmado', 'nao_posso'].includes(respostaStatus)) {
           return jsonResponse({ok:false, erro:'Dados da notificação de confirmação inválidos.'});
