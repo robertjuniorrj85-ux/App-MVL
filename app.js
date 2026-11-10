@@ -106,7 +106,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.17';
+const MVL_VERSION='11.4.18';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -705,33 +705,50 @@ async function setEncounterConfirmation(scale,encounterId,status){
     },{merge:true});
     data.encontros=encontros;
   }catch(e){
-    console.error(e);
-    alert('Não foi possível registrar sua resposta.');
+    console.error('Falha ao gravar confirmação no Firestore:',e);
+    alert('Não foi possível registrar sua resposta. Verifique sua conexão e tente novamente.');
     return false;
   }
 
+  // A confirmação já está persistida. Falhas nas notificações não devem desfazer
+  // nem mascarar o registro principal.
   const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
   const nome=currentUserData.nome||currentUser.email;
   const texto=`${nome} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;
-
-  // Notificação interna para todos do encontro específico e administradores de escalas.
-  // O próprio respondente é excluído e createNotifications elimina destinatários repetidos.
   const admins=adminIdsFor('escalas');
   const destinatarios=[...new Set([...(enc?.integranteIds||[]),...admins])]
     .filter(id=>id&&id!==currentUser.uid);
-  createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId})
-    .catch(e=>console.error('Falha ao criar notificações da confirmação:',e));
 
-  // O Apps Script registra o mapa completo e envia um único push aos mesmos grupos.
-  // Não enviar um push administrativo separado para evitar duplicidade.
-  syncScaleConfirmation(scale.id,data.encontros||{},encounterId,status)
-    .then(resultado=>{
-      if(!resultado?.registroOk)console.error('Apps Script não confirmou o registro da resposta:',resultado);
-      else if(!resultado.pushAceito)console.warn('Resposta registrada, mas o push não foi aceito pelo OneSignal:',resultado?.pushErro||resultado);
-    })
-    .catch(e=>console.error('Falha ao sincronizar confirmação:',e));
+  let notificacaoInternaOk=true;
+  try{
+    await createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId});
+  }catch(e){
+    notificacaoInternaOk=false;
+    console.error('Falha ao criar notificações internas da confirmação:',e);
+  }
 
-  alert(status==='confirmado'?'Presença confirmada neste encontro.':'Resposta registrada neste encontro.');
+  let sincronizacao={registroOk:false,pushAceito:false,erro:'Não foi possível consultar o serviço de notificações.'};
+  try{
+    sincronizacao=await syncScaleConfirmation(scale.id,data.encontros||{},encounterId,status);
+  }catch(e){
+    sincronizacao={registroOk:false,pushAceito:false,erro:String(e)};
+    console.error('Falha ao sincronizar confirmação com o Apps Script:',e);
+  }
+
+  // Compatibilidade com o fluxo que enviava o push administrativo diretamente.
+  // Só usa o envio legado quando a sincronização principal não confirma o push,
+  // evitando duplicidade quando o endpoint confirmacao_sync já o aceitou.
+  let pushFallbackOk=true;
+  if(!sincronizacao?.pushAceito&&admins.length){
+    pushFallbackOk=await enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins);
+    if(!pushFallbackOk)console.error('O envio de push administrativo pelo fluxo de compatibilidade também falhou.');
+  }
+
+  let mensagem=status==='confirmado'?'Presença registrada neste encontro.':'Resposta registrada neste encontro.';
+  if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas.';
+  if(!sincronizacao?.registroOk)mensagem+=' O serviço de sincronização não confirmou o registro: '+(sincronizacao.erro||sincronizacao.pushErro||'erro não informado pelo servidor')+'.';
+  if(!sincronizacao?.pushAceito&&!pushFallbackOk)mensagem+=' O envio de push ao administrador também não foi confirmado.';
+  alert(mensagem);
   renderScales().catch(e=>console.error('Falha ao atualizar a lista de escalas:',e));
   return true;
 }
@@ -1330,4 +1347,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.17').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.18').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
