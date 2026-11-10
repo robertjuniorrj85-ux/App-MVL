@@ -12,6 +12,13 @@ service cloud.firestore {
         target.get('adminPermissions', {}).get('escalas', false) == true
       );
     }
+    function validScaleConfirmation(scaleId) {
+      return request.resource.data.tipo == 'confirmacao_escala' &&
+        request.resource.data.refId == scaleId &&
+        request.resource.data.escalaId == scaleId &&
+        request.resource.data.encontroId is string &&
+        isScaleMember(scaleId);
+    }
 
     match /usuarios/{uid} {
       allow read: if logged();
@@ -30,8 +37,22 @@ service cloud.firestore {
       allow read: if logged() && resource.data.destinatarioId == request.auth.uid;
       allow create: if admin() || (logged() && request.resource.data.remetenteId == request.auth.uid && (
         targetIsAdmin(request.resource.data.destinatarioId) ||
-        targetCanManageScales(request.resource.data.destinatarioId) ||
-        (request.resource.data.tipo in ['chat_escala', 'confirmacao_escala'] && request.resource.data.refId is string && isScaleMember(request.resource.data.refId) && request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.integranteIds)
+        (
+          request.resource.data.refId is string &&
+          validScaleConfirmation(request.resource.data.refId) &&
+          targetCanManageScales(request.resource.data.destinatarioId)
+        ) ||
+        (
+          request.resource.data.tipo == 'chat_escala' &&
+          request.resource.data.refId is string &&
+          isScaleMember(request.resource.data.refId) &&
+          request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.integranteIds
+        ) ||
+        (
+          request.resource.data.refId is string &&
+          validScaleConfirmation(request.resource.data.refId) &&
+          request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.integranteIds
+        )
       ));
       allow update: if logged() && resource.data.destinatarioId == request.auth.uid && request.resource.data.destinatarioId == resource.data.destinatarioId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lida','lidaEm']);
       allow delete: if admin();
