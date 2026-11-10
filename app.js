@@ -573,11 +573,15 @@ async function syncScaleEncounterParticipants(scaleId,encontros){
     if(!encontro?.id)throw new Error('Encontro sem identificador estável.');
     const base=collection(db,'escalas',scaleId,'encontros',String(encontro.id),'participantes');
     const atuais=await getDocs(base);
+    const existentes=new Map(atuais.docs.map(snap=>[snap.id,snap.data()||{}]));
     const desejados=[...new Set((encontro.integranteIds||[]).filter(uid=>typeof uid==='string'&&uid.trim()))];
     const desiredSet=new Set(desejados);
     const ops=[];
     for(const uid of desejados){
-      ops.push({kind:'set',ref:doc(base,uid),data:{uid,escalaId,encontroId:String(encontro.id),atualizadoEm:serverTimestamp()}});
+      const atual=existentes.get(uid);
+      if(!atual||atual.uid!==uid||atual.escalaId!==scaleId||atual.encontroId!==String(encontro.id)){
+        ops.push({kind:'set',ref:doc(base,uid),data:{uid,escalaId,encontroId:String(encontro.id),atualizadoEm:serverTimestamp()}});
+      }
     }
     atuais.forEach(snap=>{if(!desiredSet.has(snap.id))ops.push({kind:'delete',ref:snap.ref});});
     for(let i=0;i<ops.length;i+=450){
