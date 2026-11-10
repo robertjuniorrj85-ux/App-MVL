@@ -571,12 +571,17 @@ async function syncScaleEncounterParticipants(scaleId,encontros){
   if(!canManage('escalas')||!scaleId)throw new Error('Sem permissão para sincronizar participantes dos encontros.');
   const encontrosCol=collection(db,'escalas',scaleId,'encontros');
   const encontrosExistentes=await getDocs(encontrosCol);
+  const indiceExistente=new Map(encontrosExistentes.docs.map(snap=>[snap.id,snap.data()||{}]));
   const idsAtuais=new Set((Array.isArray(encontros)?encontros:[]).map(e=>String(e.id)));
   for(const encontro of (Array.isArray(encontros)?encontros:[])){
     if(!encontro?.id)throw new Error('Encontro sem identificador estável.');
     const encontroId=String(encontro.id);
     const encontroRef=doc(encontrosCol,encontroId);
-    await setDoc(encontroRef,{id:encontroId,nome:String(encontro.nome||''),data:String(encontro.data||''),horario:String(encontro.horario||'')});
+    const encontroAtual=indiceExistente.get(encontroId);
+    const dadosEncontro={id:encontroId,nome:String(encontro.nome||''),data:String(encontro.data||''),horario:String(encontro.horario||'')};
+    if(!encontroAtual||encontroAtual.id!==dadosEncontro.id||encontroAtual.nome!==dadosEncontro.nome||encontroAtual.data!==dadosEncontro.data||encontroAtual.horario!==dadosEncontro.horario){
+      await setDoc(encontroRef,dadosEncontro);
+    }
     const base=collection(db,'escalas',scaleId,'encontros',encontroId,'participantes');
     const atuais=await getDocs(base);
     const existentes=new Map(atuais.docs.map(snap=>[snap.id,snap.data()||{}]));
@@ -677,7 +682,8 @@ async function saveScale(){
     await syncScaleEncounterParticipants(scaleId,encontros);
   }catch(e){
     console.error('Falha ao salvar escala/sincronizar participantes por encontro',e);
-    alert('A escala pode ter sido salva, mas não foi possível sincronizar os participantes dos encontros. Não considere a autorização por encontro concluída. Verifique a conexão e tente salvar novamente.');
+    if(scaleId)editingId=scaleId;
+    alert('A escala pode ter sido salva, mas não foi possível sincronizar os participantes dos encontros. Não considere a autorização por encontro concluída. Verifique a conexão e tente atualizar a escala novamente.');
     saveBtn.disabled=false;
     return;
   }
