@@ -105,6 +105,22 @@ service cloud.firestore {
         );
     }
 
+    function canReceiveChatAdmin(uid) {
+      let target = get(/databases/$(database)/documents/usuarios/$(uid)).data;
+      return exists(/databases/$(database)/documents/usuarios/$(uid))
+        && (
+          (target.get('role', '') == 'admin' && target.get('adminPrincipal', false) == true)
+          || (
+            (target.get('role', '') == 'admin_limited'
+              || (target.get('role', '') == 'admin' && target.get('adminPrincipal', false) == false))
+            && (
+              target.get('adminPermissions', {}).get('chats', false) == true
+              || target.get('permissoes', {}).get('chats', false) == true
+            )
+          )
+        );
+    }
+
     function keepsProtectedUserFields() {
       return !request.resource.data
         .diff(resource.data)
@@ -214,8 +230,12 @@ service cloud.firestore {
           || (
             request.resource.data.tipo == 'chat_escala'
             && request.resource.data.refId is string
-            && isScaleMember(request.resource.data.refId)
-            && request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.get('integranteIds', [])
+            && exists(/databases/$(database)/documents/escalas/$(request.resource.data.refId))
+            && (isScaleMember(request.resource.data.refId) || hasPermission('chats'))
+            && (
+              request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.get('integranteIds', [])
+              || canReceiveChatAdmin(request.resource.data.destinatarioId)
+            )
           )
           || (
             request.resource.data.tipo == 'escala'
