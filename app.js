@@ -200,7 +200,7 @@ async function acaoAdminUsuario(tipo,u,extra={}){
   if(!isPrincipalAdmin)throw new Error('Apenas o Administrador principal pode executar esta ação.');
   return chamarBackendV10(tipo,{usuarioId:u.id,uid:u.id,targetUid:u.id,email:u.email||'',...extra});
 }
-async async function enviarPushMVL(tipo,titulo,mensagem,destinatarios=[],url='https://robertjuniorrj85-ux.github.io/App-MVL/'){
+async function enviarPushMVL(tipo,titulo,mensagem,destinatarios=[],url='https://robertjuniorrj85-ux.github.io/App-MVL/'){
   try{
     const user=auth.currentUser;if(!user)return false;
     const idToken=await user.getIdToken();
