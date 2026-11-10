@@ -28,6 +28,29 @@ const login=$('login'),appScreen=$('app'),email=$('email'),senha=$('senha'),entr
 const loginStatus=$('login-status'),saudacao=$('saudacao'),homeView=$('home-view'),sectionView=$('section-view');
 const sectionTitle=$('section-title'),sectionSubtitle=$('section-subtitle'),dynamicForm=$('dynamic-form');
 const listEl=$('items-list'),adminPanel=$('admin-panel'),roleBadge=$('role-badge'),sectionSpecial=$('section-special');
+// Confirmações dos encontros: delegação única para manter os toques funcionais
+// após reconstruções dos cartões e evitar perda de handlers individuais.
+listEl.addEventListener('click',async event=>{
+  const button=event.target.closest('.enc-yes,.enc-no');
+  if(!button||!listEl.contains(button)||button.disabled)return;
+  const card=button.closest('.scale-card');
+  const scale=scalesCache.find(item=>item.id===card?.dataset.scaleId);
+  const encounterId=button.dataset.eid;
+  if(!scale||!encounterId)return;
+  event.preventDefault();
+  button.disabled=true;
+  const originalText=button.textContent;
+  button.textContent='Registrando...';
+  try{
+    const saved=await setEncounterConfirmation(scale,encounterId,button.classList.contains('enc-yes')?'confirmado':'nao_posso');
+    if(!saved)return;
+  }catch(error){
+    console.error('Falha ao responder encontro:',error);
+    alert('Não foi possível registrar sua resposta. Tente novamente.');
+  }finally{
+    if(button.isConnected){button.disabled=false;button.textContent=originalText;}
+  }
+});
 const saveBtn=$('salvar-item'),cancelEditBtn=$('cancelar-edicao');
 
 let currentUser=null,currentUserData={},isAdmin=false,isPrincipalAdmin=false,currentPage='inicio',editingId=null;
@@ -83,7 +106,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.15';
+const MVL_VERSION='11.4.16';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -647,7 +670,7 @@ async function getScaleConfirmations(s){
 function encounterStatusHtml(st){return st==='confirmado'?'<span class="status-pill ok">Confirmado</span>':st==='nao_posso'?'<span class="status-pill no">Não poderei</span>':'<span class="status-pill">Aguardando</span>';}
 async function buildScaleCard(s){
   const _last=latestEncounterOfScale(s);const _concluida=!!_last&&new Date(`${_last.data}T${_last.horario||'23:59'}:00`).getTime()<Date.now();
-  const card=document.createElement('div');card.className='item-card scale-card';const manageScale=canManage('escalas'),rep=repById(s.repertorioId),es=scaleEncounters(s);
+  const card=document.createElement('div');card.className='item-card scale-card';card.dataset.scaleId=s.id;const manageScale=canManage('escalas'),rep=repById(s.repertorioId),es=scaleEncounters(s);
   let confirmations={},confirmationLoadError=false;
   try{confirmations=await getScaleConfirmations(s);}catch(err){console.error('Não foi possível consultar confirmações da escala',s.id,err);confirmationLoadError=true;}
   const mine=confirmations[currentUser.uid]||{};let repHtml='';
@@ -660,10 +683,10 @@ async function buildScaleCard(s){
       const response=c.encontros?.[e.id]||(e.id==='principal'?c.status:'');
       return `<div class="scale-confirmation-member"><span>${escapeHtml(userName(uid))}</span>${confirmationLoadError?'<span class="status-pill">Indisponível</span>':encounterStatusHtml(response)}</div>`;
     }).join('');
-    return `<div class="encounter-card ${e.principal?'principal':''}" data-encounter-id="${escapeAttr(e.id)}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${involved?encounterStatusHtml(st):''}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div><div class="scale-confirmations"><b>Participantes e confirmações</b>${participantRows||'<div class="item-meta">Nenhum participante cadastrado neste encontro.</div>'}</div>${involved?`<div class="item-actions"><button class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;
+    return `<div class="encounter-card ${e.principal?'principal':''}" data-encounter-id="${escapeAttr(e.id)}"><div class="encounter-title"><b>${e.principal?'⭐ ':''}${escapeHtml(e.nome||'Encontro')}</b>${involved?encounterStatusHtml(st):''}</div><div class="item-meta">📅 ${dateBR(e.data)} ${escapeHtml(e.horario||'')}</div><div class="scale-confirmations"><b>Participantes e confirmações</b>${participantRows||'<div class="item-meta">Nenhum participante cadastrado neste encontro.</div>'}</div>${involved?`<div class="item-actions"><button type="button" class="confirm-btn enc-yes" data-eid="${escapeAttr(e.id)}">Confirmar</button><button type="button" class="decline-btn enc-no" data-eid="${escapeAttr(e.id)}">Não poderei</button></div>`:''}</div>`;
   }).join('');
   card.innerHTML=`<div class="scale-headline"><div><div class="scale-team-label ${scaleTeam(s)}">${teamName(scaleTeam(s))}</div><h3>🎤 ${escapeHtml(scaleSingerName(s))}</h3>${_concluida?'<span class="status-pill done">Concluída</span>':''}<div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${manageScale?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
-  card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelectorAll('.enc-yes').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'confirmado'));card.querySelectorAll('.enc-no').forEach(b=>b.onclick=()=>setEncounterConfirmation(s,b.dataset.eid,'nao_posso'));card.querySelector('.edit-scale')?.addEventListener('click',()=>{renderScales(s);scrollToAdminForm();});card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
+  card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelector('.edit-scale')?.addEventListener('click',()=>{renderScales(s);scrollToAdminForm();});card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
 }
 async function deleteScaleCascade(scaleId){const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();syncScaleDelete(scaleId).catch(()=>{});}
 async function setEncounterConfirmation(scale,encounterId,status){
@@ -683,7 +706,7 @@ async function setEncounterConfirmation(scale,encounterId,status){
   }catch(e){
     console.error(e);
     alert('Não foi possível registrar sua resposta.');
-    return;
+    return false;
   }
 
   const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
@@ -708,7 +731,8 @@ async function setEncounterConfirmation(scale,encounterId,status){
     .catch(e=>console.error('Falha ao sincronizar confirmação:',e));
 
   alert(status==='confirmado'?'Presença confirmada neste encontro.':'Resposta registrada neste encontro.');
-  renderScales().catch(()=>{});
+  renderScales().catch(e=>console.error('Falha ao atualizar a lista de escalas:',e));
+  return true;
 }
 // Compatibilidade com botões/escala antiga
 async function setConfirmation(scale,status){const e=principalEncounter(scale);if(e)return setEncounterConfirmation(scale,e.id,status);}
@@ -1305,4 +1329,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.15').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.16').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
