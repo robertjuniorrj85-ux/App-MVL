@@ -736,9 +736,11 @@ async function setEncounterConfirmation(scale,encounterId,status){
   const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
   const nome=currentUserData.nome||currentUser.email;
   const texto=`${nome} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;
+  // Resposta de integrante: notificação interna somente aos demais participantes
+  // deste encontro. Administradores seguem no fluxo administrativo separado.
   const admins=adminIdsFor('escalas');
-  const destinatarios=[...new Set([...(enc?.integranteIds||[]),...admins])]
-    .filter(id=>id&&id!==currentUser.uid);
+  const destinatarios=[...new Set((enc?.integranteIds||[])
+    .filter(id=>typeof id==='string'&&id&&id!==currentUser.uid))];
 
   let notificacaoInternaOk=true;
   try{
@@ -773,7 +775,7 @@ async function setEncounterConfirmation(scale,encounterId,status){
   }
 
   let mensagem=status==='confirmado'?'Presença registrada neste encontro.':'Resposta registrada neste encontro.';
-  if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas.';
+  if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas. Consulte o console para o código técnico do Firestore.';
   if(!sincronizacao?.registroOk)mensagem+=' O serviço de sincronização não confirmou o registro: '+(sincronizacao.erro||sincronizacao.pushErro||'erro não informado pelo servidor')+'.';
   if(!pushIntegrantes?.pushAceito)mensagem+=' O push aos demais integrantes não foi confirmado: '+(pushIntegrantes.erro||'erro não informado')+'.';
   if(!sincronizacao?.pushAceito&&!pushFallbackOk)mensagem+=' O envio de push ao administrador também não foi confirmado.';
