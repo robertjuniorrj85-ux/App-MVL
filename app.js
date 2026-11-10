@@ -660,6 +660,27 @@ async function syncScaleConfirmation(scaleId,encontros,encontroId,respostaStatus
     return {ok:false,registroOk:false,pushAceito:false,erro:String(e)};
   }
 }
+async function syncScaleMembersConfirmationPush(escalaId,encontroId,respostaStatus){
+  try{
+    const idToken=await currentUser.getIdToken();
+    const r=await fetch(MVL_PUSH_ENDPOINT,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({idToken,tipo:'confirmacao_integrantes',escalaId,encontroId,respostaStatus})
+    });
+    const j=await r.json().catch(()=>({ok:false,erro:'Resposta inválida do servidor.'}));
+    return {
+      ok:j.ok===true,
+      pushAceito:j.pushAceito===true,
+      totalDestinatarios:Number(j.totalDestinatarios||0),
+      totalSubscriptions:Number(j.totalSubscriptions||0),
+      erro:j.erro||j.pushErro||''
+    };
+  }catch(e){
+    console.error('Erro ao notificar integrantes da escala:',e);
+    return {ok:false,pushAceito:false,erro:String(e)};
+  }
+}
 async function getScaleConfirmations(s){
   // A confirmação pertence ao encontro, mas fica armazenada por integrante na escala.
   // Consulta de leitura; a regra do Firestore limita o acesso aos participantes e gestores.
@@ -735,18 +756,26 @@ async function setEncounterConfirmation(scale,encounterId,status){
     console.error('Falha ao sincronizar confirmação com o Apps Script:',e);
   }
 
-  // Compatibilidade com o fluxo que enviava o push administrativo diretamente.
-  // Só usa o envio legado quando a sincronização principal não confirma o push,
-  // evitando duplicidade quando o endpoint confirmacao_sync já o aceitou.
+  // Fluxo independente: notifica somente os demais integrantes deste encontro.
+  let pushIntegrantes={ok:false,pushAceito:false,erro:'Notificação dos integrantes não confirmada.'};
+  try{
+    pushIntegrantes=await syncScaleMembersConfirmationPush(scale.id,encounterId,status);
+  }catch(e){
+    console.error('Falha no push dos integrantes:',e);
+  }
+
+  // Mantém o fluxo administrativo original, separado do aviso aos integrantes.
+  // O Apps Script determina os administradores autorizados e exclui o remetente.
   let pushFallbackOk=true;
   if(!sincronizacao?.pushAceito&&admins.length){
     pushFallbackOk=await enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins);
-    if(!pushFallbackOk)console.error('O envio de push administrativo pelo fluxo de compatibilidade também falhou.');
+    if(!pushFallbackOk)console.error('O envio de push administrativo também falhou.');
   }
 
   let mensagem=status==='confirmado'?'Presença registrada neste encontro.':'Resposta registrada neste encontro.';
   if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas.';
   if(!sincronizacao?.registroOk)mensagem+=' O serviço de sincronização não confirmou o registro: '+(sincronizacao.erro||sincronizacao.pushErro||'erro não informado pelo servidor')+'.';
+  if(!pushIntegrantes?.pushAceito)mensagem+=' O push aos demais integrantes não foi confirmado: '+(pushIntegrantes.erro||'erro não informado')+'.';
   if(!sincronizacao?.pushAceito&&!pushFallbackOk)mensagem+=' O envio de push ao administrador também não foi confirmado.';
   alert(mensagem);
   renderScales().catch(e=>console.error('Falha ao atualizar a lista de escalas:',e));
