@@ -204,3 +204,113 @@ describe('scale chat notifications', () => {
     await assertSucceeds(setDoc(doc(db, 'notificacoes/chat-manager'), chatNotification('member-a', 'admin')));
   });
 });
+
+
+
+describe('other notification flows', () => {
+  async function seedNotificationFixtures() {
+    await testEnv.withSecurityRulesDisabled(async context => {
+      const db = context.firestore();
+      await setDoc(doc(db, 'usuarios/member-a'), {role: 'member'});
+      await setDoc(doc(db, 'usuarios/member-b'), {role: 'member'});
+      await setDoc(doc(db, 'usuarios/admin-com'), {
+        role: 'admin_limited',
+        adminPrincipal: false,
+        adminPermissions: {comunicacao: true}
+      });
+      await setDoc(doc(db, 'usuarios/limited-messages'), {
+        role: 'admin_limited',
+        adminPrincipal: false,
+        adminPermissions: {mensagens: true}
+      });
+      await setDoc(doc(db, 'conversas/conversation-1'), {
+        tipo: 'privado',
+        participanteIds: ['member-a', 'member-b'],
+        moderadorIds: []
+      });
+      await setDoc(doc(db, 'notificacoes/read-test'), {
+        destinatarioId: 'member-a',
+        remetenteId: 'admin',
+        titulo: 'Aviso',
+        mensagem: 'Teste',
+        tipo: 'oracao',
+        refId: '',
+        lida: false,
+        criadoEm: Timestamp.now()
+      });
+    });
+  }
+
+  function notification(to, from, type, refId = '') {
+    return {
+      destinatarioId: to,
+      remetenteId: from,
+      titulo: 'Aviso',
+      mensagem: 'Teste',
+      tipo: type,
+      refId
+    };
+  }
+
+  it('allows a scale manager to notify a scale participant', async () => {
+    const db = testEnv.authenticatedContext('admin').firestore();
+    await assertSucceeds(setDoc(
+      doc(db, 'notificacoes/scale-notice'),
+      notification('member-a', 'admin', 'escala', 'scale-1')
+    ));
+  });
+
+  it('allows a conversation participant to notify another participant', async () => {
+    await seedNotificationFixtures();
+    const db = testEnv.authenticatedContext('member-a').firestore();
+    await assertSucceeds(setDoc(
+      doc(db, 'notificacoes/conversation-notice'),
+      notification('member-b', 'member-a', 'conversa', 'conversation-1')
+    ));
+  });
+
+  it('allows a member to notify a communication administrator about a message', async () => {
+    await seedNotificationFixtures();
+    const db = testEnv.authenticatedContext('member-a').firestore();
+    await assertSucceeds(setDoc(
+      doc(db, 'notificacoes/message-notice'),
+      notification('admin-com', 'member-a', 'mensagem')
+    ));
+  });
+
+  it('allows an admin without communication permission to notify leadership', async () => {
+    await seedNotificationFixtures();
+    const db = testEnv.authenticatedContext('limited-messages').firestore();
+    await assertSucceeds(setDoc(
+      doc(db, 'notificacoes/limited-message-notice'),
+      notification('admin-com', 'limited-messages', 'mensagem')
+    ));
+  });
+
+  it('allows a member to notify an existing user about a prayer', async () => {
+    await seedNotificationFixtures();
+    const db = testEnv.authenticatedContext('member-a').firestore();
+    await assertSucceeds(setDoc(
+      doc(db, 'notificacoes/prayer-notice'),
+      notification('member-b', 'member-a', 'oracao')
+    ));
+  });
+
+  it('allows a recipient to update only read fields', async () => {
+    await seedNotificationFixtures();
+    const db = testEnv.authenticatedContext('member-a').firestore();
+    await assertSucceeds(updateDoc(
+      doc(db, 'notificacoes/read-test'),
+      {lida: true, lidaEm: Timestamp.now()}
+    ));
+  });
+
+  it('denies a recipient changing protected notification content', async () => {
+    await seedNotificationFixtures();
+    const db = testEnv.authenticatedContext('member-a').firestore();
+    await assertFails(updateDoc(
+      doc(db, 'notificacoes/read-test'),
+      {mensagem: 'Alterada'}
+    ));
+  });
+});
