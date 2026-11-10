@@ -42,7 +42,8 @@ listEl.addEventListener('click',async event=>{
   const originalText=button.textContent;
   button.textContent='Registrando...';
   try{
-    await setEncounterConfirmation(scale,encounterId,button.classList.contains('enc-yes')?'confirmado':'nao_posso');
+    const saved=await setEncounterConfirmation(scale,encounterId,button.classList.contains('enc-yes')?'confirmado':'nao_posso');
+    if(!saved)return;
   }catch(error){
     console.error('Falha ao responder encontro:',error);
     alert('Não foi possível registrar sua resposta. Tente novamente.');
@@ -705,7 +706,7 @@ async function setEncounterConfirmation(scale,encounterId,status){
   }catch(e){
     console.error(e);
     alert('Não foi possível registrar sua resposta.');
-    return;
+    return false;
   }
 
   const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
@@ -730,7 +731,8 @@ async function setEncounterConfirmation(scale,encounterId,status){
     .catch(e=>console.error('Falha ao sincronizar confirmação:',e));
 
   alert(status==='confirmado'?'Presença confirmada neste encontro.':'Resposta registrada neste encontro.');
-  renderScales().catch(()=>{});
+  renderScales().catch(e=>console.error('Falha ao atualizar a lista de escalas:',e));
+  return true;
 }
 // Compatibilidade com botões/escala antiga
 async function setConfirmation(scale,status){const e=principalEncounter(scale);if(e)return setEncounterConfirmation(scale,e.id,status);}
