@@ -10,8 +10,8 @@ Esta revisão cobre as gravações em `notificacoes`, a confirmação em `escala
 | Integrante confirma presença na própria escala | Permitir gravar a própria confirmação | UID autenticado igual ao UID do documento; status permitido |
 | Integrante informa que não poderá participar | Permitir gravar a própria confirmação | Mesma regra de confirmação |
 | Integrante cria notificação para si mesmo | Negar | destinatarioId diferente do remetente |
-| Integrante notifica outro integrante da mesma escala | Permitir somente tipo confirmacao_escala, com escalaId/refId/encontroId | remetente e destinatário precisam pertencer à escala |
-| Integrante tenta notificar administrador pelo fluxo confirmacao_escala | Negar | targetIsAdmin negado nesse ramo |
+| Integrante notifica outro integrante da mesma escala | Permitir somente tipo confirmacao_escala, com escalaId/refId/encontroId | remetente e destinatário precisam pertencer à escala e não podem ser admin/admin_limited |
+| Integrante tenta notificar administrador ou admin_limited pelo fluxo confirmacao_escala | Negar | isPrivileged negado nesse ramo; frontend também exclui ambos |
 | Integrante tenta notificar usuário fora da escala | Negar | destinatário precisa constar em escalas/{id}.integranteIds |
 | Integrante tenta criar notificação administrativa/genérica | Negar | tipo não autorizado no ramo de integrante |
 | Integrante envia chat_escala | Preservar acesso existente, limitado a integrantes da escala | remetente e destinatário precisam pertencer à escala |
@@ -20,7 +20,7 @@ Esta revisão cobre as gravações em `notificacoes`, a confirmação em `escala
 | Destinatário tenta alterar mensagem, remetente ou destinatário | Negar | affectedKeys restrito |
 | Integrante tenta excluir notificação | Negar | delete somente admin |
 | Integrante confirma e tenta enviar push para administradores | Não usar o fluxo de integrantes | Apps Script continua determinando destinatários de confirmacao_admin |
-| Administrador confirma | Manter fluxo administrativo separado; não notificar integrantes | Apps Script/cliente preservam chamadas separadas |
+| Administrador ou admin_limited confirma | Manter fluxo administrativo separado; não notificar integrantes | frontend exclui remetentes privilegiados do ramo interno; Apps Script preserva chamadas separadas |
 
 ## Limitação importante do modelo atual
 O documento de escala contém `encontros` como uma lista de mapas, cada um com seu próprio `integranteIds`. As regras atuais não têm uma forma segura e simples de percorrer essa lista e provar que o destinatário pertence especificamente ao `encontroId` informado. Por isso, esta proposta garante que remetente e destinatário pertençam à mesma escala, enquanto o frontend seleciona somente `enc.integranteIds` do encontro. Não declarar essa regra como prova de autorização por encontro.
