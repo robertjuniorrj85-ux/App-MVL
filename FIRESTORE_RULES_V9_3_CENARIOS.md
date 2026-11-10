@@ -1,37 +1,54 @@
-# Revisão de autorização — notificações e confirmações (proposta V9.3)
+# Revisão de autorização — notificações e confirmações por encontro (V11.4.21)
 
 ## Escopo
-Esta revisão cobre as gravações em `notificacoes`, a confirmação em `escalas/{escalaId}/confirmacoes/{uid}` e o chat de escala. A proposta mantém o fluxo de push externo separado do Firestore.
+Esta revisão parte do conjunto completo de regras fornecido pelo responsável do projeto (390 linhas), preservando as permissões existentes e alterando apenas os pontos necessários para restringir notificações e provar a participação no encontro exato.
+
+## Modelo de participação por encontro
+O documento principal `escalas/{escalaId}` continua mantendo o campo `encontros` como lista de mapas e cada encontro continua com seu `integranteIds`. Para permitir autorização verificável pelas regras, a aplicação também mantém a associação normalizada em:
+
+`escalas/{escalaId}/encontros/{encontroId}/participantes/{uid}`
+
+Cada documento contém `uid`, `escalaId`, `encontroId` e `atualizadoEm`. O ID do documento é o UID do integrante.
+
+A sincronização é executada pelo fluxo administrativo de salvar/editar a escala. Ao abrir a área de escalas com permissão de gestão, a aplicação também reconcilia os vínculos das escalas existentes: cria os vínculos ausentes e remove somente os participantes que já não constam naquele encontro. A rotina não altera os documentos de escala nem as confirmações existentes.
 
 ## Matriz de cenários
 
 | Cenário | Resultado esperado | Controle |
 |---|---|---|
-| Integrante confirma presença na própria escala | Permitir gravar a própria confirmação | UID autenticado igual ao UID do documento; status permitido |
-| Integrante informa que não poderá participar | Permitir gravar a própria confirmação | Mesma regra de confirmação |
-| Integrante cria notificação para si mesmo | Negar | destinatarioId diferente do remetente |
-| Integrante notifica outro integrante da mesma escala | Permitir somente tipo confirmacao_escala, com escalaId/refId/encontroId | remetente e destinatário precisam pertencer à escala e não podem ser admin/admin_limited |
-| Integrante tenta notificar administrador ou admin_limited pelo fluxo confirmacao_escala | Negar | isPrivileged negado nesse ramo; frontend também exclui ambos |
-| Integrante tenta notificar usuário fora da escala | Negar | destinatário precisa constar em escalas/{id}.integranteIds |
-| Integrante tenta criar notificação administrativa/genérica | Negar | tipo não autorizado no ramo de integrante |
-| Integrante envia chat_escala | Preservar acesso existente, limitado a integrantes da escala | remetente e destinatário precisam pertencer à escala |
-| Administrador cria notificação | Preservar | ramo admin |
-| Destinatário marca sua notificação como lida | Permitir somente alterar lida/lidaEm | affectedKeys restrito |
-| Destinatário tenta alterar mensagem, remetente ou destinatário | Negar | affectedKeys restrito |
-| Integrante tenta excluir notificação | Negar | delete somente admin |
-| Integrante confirma e tenta enviar push para administradores | Não usar o fluxo de integrantes | Apps Script continua determinando destinatários de confirmacao_admin |
-| Administrador ou admin_limited confirma | Manter fluxo administrativo separado; não notificar integrantes | frontend exclui remetentes privilegiados do ramo interno; Apps Script preserva chamadas separadas |
+| Gestor autorizado cria/edita escala | Permitir sincronizar vínculos de participantes por encontro | `hasPermission('escalas')`; campos de vínculo conferidos |
+| Integrante pertence ao encontro | Permitir consultar o próprio vínculo | UID do documento igual ao UID autenticado |
+| Integrante confirma presença ou informa indisponibilidade | Permitir gravar a própria confirmação | UID autenticado igual ao documento; `encontroId` precisa apontar para vínculo existente no encontro exato |
+| Integrante tenta confirmar encontro do qual não participa | Negar | Ausência de `participantes/{uid}` para aquele `encontroId` |
+| Integrante cria notificação de confirmação para outro integrante do mesmo encontro | Permitir | Remetente e destinatário precisam ter vínculo no mesmo encontro |
+| Integrante tenta notificar participante de outro encontro da mesma escala | Negar | A regra verifica a subcoleção do encontro exato, não apenas `escalas/{id}.integranteIds` |
+| Integrante tenta notificar administrador pelo fluxo de confirmação | Negar | O ramo de confirmação exige vínculo de participante e o fluxo administrativo permanece separado |
+| Integrante envia notificação de chat de escala | Permitir somente entre integrantes da escala | Ambos precisam constar em `integranteIds` da escala |
+| Gestor autorizado envia aviso de nova escala | Permitir somente aos integrantes da escala | `hasPermission('escalas')` e destinatário no documento da escala |
+| Participante de conversa recebe notificação | Permitir somente entre participantes da conversa | Remetente e destinatário precisam constar em `participanteIds` |
+| Integrante envia mensagem à liderança | Permitir notificação somente a administrador com permissão de comunicação | Papel e permissões do destinatário conferidos |
+| Integrante registra oração e notifica o ministério | Permitir para UID de usuário existente | Tipo `oracao` e documento do destinatário existente |
+| Destinatário marca notificação como lida | Permitir somente alterar `lida` e `lidaEm` | `affectedKeys()` restrito |
+| Destinatário tenta alterar mensagem, remetente ou destinatário | Negar | Campos protegidos não podem ser alterados |
+| Admin principal e admins limitados | Preservar regras e permissões já existentes | Helpers originais mantidos |
 
-## Limitação importante do modelo atual
-O documento de escala contém `encontros` como uma lista de mapas, cada um com seu próprio `integranteIds`. As regras atuais não têm uma forma segura e simples de percorrer essa lista e provar que o destinatário pertence especificamente ao `encontroId` informado. Por isso, esta proposta garante que remetente e destinatário pertençam à mesma escala, enquanto o frontend seleciona somente `enc.integranteIds` do encontro. Não declarar essa regra como prova de autorização por encontro.
+## Compatibilidade e migração
+- O formato legado de `escalas/{id}.encontros` é mantido.
+- `integranteIds` no documento principal continua existindo para compatibilidade com consultas, chat e lembretes atuais.
+- Confirmações continuam no caminho `escalas/{escalaId}/confirmacoes/{uid}`; o campo `encontroId` identifica o encontro da operação que está sendo gravada.
+- Nenhuma confirmação ou escala é apagada pela rotina de sincronização.
+- A migração é progressiva: escalas existentes são reconciliadas quando um gestor com permissão abre a área de escalas ou salva uma escala. Antes dessa reconciliação, notificações/confirmacões que dependem do vínculo normalizado podem ser negadas. O gestor deve abrir a área e aguardar a sincronização antes de testar o fluxo.
+- A rotina não deve ser executada por integrantes comuns.
 
-Para garantir também no servidor que o destinatário pertence ao encontro exato, será necessário normalizar a associação em documentos consultáveis por ID (por exemplo, subcoleção de participantes por encontro) ou mover a criação da notificação para backend confiável que valide a associação. Essa mudança de modelo/backend fica fora desta correção mínima.
-
-## Validação antes de publicar
-- Executar Firebase Emulator Suite / Rules Unit Testing para todos os cenários acima.
-- Confirmar o formato real de `escalas/{id}.integranteIds` nos dados atuais antes de publicar.
-- Confirmar que contas com role `admin_limited` não devem ser tratadas como administradores de destino neste fluxo; a regra atual considera role exatamente `admin`, preservando a semântica existente.
-- Não publicar esta proposta até conferir qual conjunto de regras está ativo no projeto Firebase.
+## Limites de validação
+- A proposta foi comparada com o arquivo completo de regras enviado e mantém os blocos de usuários, mensagens, conversas, chat, reações, agenda, repertórios, músicas, cifras, avisos, arquivos, links, membros, orações e configurações.
+- Não foi executado Firebase Emulator / Rules Unit Testing nesta etapa; portanto, esta alteração ainda não é certificada para publicação.
+- A sintaxe do JavaScript deve ser verificada separadamente; isso não substitui testes com Firebase Emulator nem teste funcional com contas de perfis diferentes.
+- O arquivo de regras é uma proposta para revisão manual. Não existe publicação automática via GitHub neste repositório e nenhuma regra foi enviada ao Firebase Console.
 
 ## Publicação
-Este repositório não contém `firebase.json`, `.firebaserc` nem um arquivo canônico `firestore.rules`. O arquivo `FIRESTORE_RULES_V9_3_PROPOSTA.txt` é documentação de proposta, não deploy automático. Merge no GitHub não altera as regras ativas do Firebase.
+Não publicar antes de:
+1. Validar a sintaxe das regras no Firebase Rules Playground/Emulator.
+2. Testar integrante do encontro, integrante de outro encontro da mesma escala, administrador principal e administrador limitado.
+3. Confirmar a sincronização de participantes de todas as escalas existentes.
+4. Testar todos os tipos de notificação listados acima e as funcionalidades preservadas.
