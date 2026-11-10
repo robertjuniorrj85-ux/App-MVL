@@ -6,11 +6,11 @@ Esta revisão parte do conjunto completo de regras fornecido pelo responsável d
 ## Modelo de participação por encontro
 O documento principal `escalas/{escalaId}` continua mantendo o campo `encontros` como lista de mapas e cada encontro continua com seu `integranteIds`. Para permitir autorização verificável pelas regras, a aplicação também mantém a associação normalizada em:
 
-`escalas/{escalaId}/encontros/{encontroId}/participantes/{uid}`
+`escalas/{escalaId}/encontros/{encontroId}` e `escalas/{escalaId}/encontros/{encontroId}/participantes/{uid}`
 
-Cada documento contém `uid`, `escalaId`, `encontroId` e `atualizadoEm`. O ID do documento é o UID do integrante.
+O documento de índice do encontro contém `id`, `nome`, `data` e `horario`. A subcoleção `participantes` contém documentos com `uid`, `escalaId`, `encontroId` e `atualizadoEm`; o ID do documento é o UID do integrante.
 
-A sincronização é executada pelo fluxo administrativo de salvar/editar a escala. Ao abrir a área de escalas com permissão de gestão, a aplicação também reconcilia os vínculos das escalas existentes: cria os vínculos ausentes e remove somente os participantes que já não constam naquele encontro. A rotina não altera os documentos de escala nem as confirmações existentes.
+A sincronização é executada pelo fluxo administrativo de salvar/editar a escala. Ao abrir a área de escalas com permissão de gestão, a aplicação também reconcilia as escalas existentes: cria/atualiza somente índices de encontro divergentes, cria vínculos ausentes, remove participantes que já não constam naquele encontro e limpa subcoleções de encontros removidos. A rotina não altera os documentos de escala nem as confirmações existentes.
 
 ## Matriz de cenários
 
