@@ -238,6 +238,12 @@ service cloud.firestore {
       allow create, update, delete:
         if hasPermission('escalas');
 
+      // Índice de encontros mantido pelo gestor para reconciliar vínculos removidos.
+      match /encontros/{encontroId} {
+        allow read: if hasPermission('escalas');
+        allow create, update, delete: if hasPermission('escalas');
+      }
+
       // Associação normalizada: prova a participação no encontro exato.
       match /encontros/{encontroId}/participantes/{uid} {
         allow read: if hasPermission('escalas')
