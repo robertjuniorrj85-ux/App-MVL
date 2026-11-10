@@ -157,3 +157,50 @@ describe('confirmações isoladas por encontro', () => {
     ));
   });
 });
+
+
+describe('scale chat notifications', () => {
+  async function seedLimitedChatAdmin() {
+    await testEnv.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'usuarios/admin-chat'), {
+        role: 'admin_limited',
+        adminPrincipal: false,
+        adminPermissions: {chats: true}
+      });
+      await setDoc(doc(context.firestore(), 'usuarios/outsider'), {role: 'member'});
+    });
+  }
+
+  function chatNotification(to, from = 'member-a') {
+    return {
+      destinatarioId: to,
+      remetenteId: from,
+      tipo: 'chat_escala',
+      refId: 'scale-1',
+      titulo: 'Chat',
+      mensagem: 'Nova mensagem'
+    };
+  }
+
+  it('allows a member to notify the principal chat administrator', async () => {
+    const db = testEnv.authenticatedContext('member-a').firestore();
+    await assertSucceeds(setDoc(doc(db, 'notificacoes/chat-admin'), chatNotification('admin')));
+  });
+
+  it('allows a member to notify a limited administrator with chat permission', async () => {
+    await seedLimitedChatAdmin();
+    const db = testEnv.authenticatedContext('member-a').firestore();
+    await assertSucceeds(setDoc(doc(db, 'notificacoes/chat-limited'), chatNotification('admin-chat')));
+  });
+
+  it('denies a notification to an outsider', async () => {
+    await seedLimitedChatAdmin();
+    const db = testEnv.authenticatedContext('member-a').firestore();
+    await assertFails(setDoc(doc(db, 'notificacoes/chat-outsider'), chatNotification('outsider')));
+  });
+
+  it('allows a chat administrator to notify a scale member', async () => {
+    const db = testEnv.authenticatedContext('admin').firestore();
+    await assertSucceeds(setDoc(doc(db, 'notificacoes/chat-manager'), chatNotification('member-a', 'admin')));
+  });
+});
