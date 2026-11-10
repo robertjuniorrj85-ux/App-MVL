@@ -252,7 +252,7 @@ service cloud.firestore {
           )
           || (
             request.resource.data.tipo == 'mensagem'
-            && !canMessages()
+            && !hasPermission('comunicacao')
             && canReceiveCommunicationAdmin(request.resource.data.destinatarioId)
           )
           || (
