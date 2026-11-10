@@ -12,8 +12,8 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.role == 'admin';
     }
 
-    function targetIsAdmin(uid) {
-      return get(/databases/$(database)/documents/usuarios/$(uid)).data.role == 'admin';
+    function isPrivileged(uid) {
+      return get(/databases/$(database)/documents/usuarios/$(uid)).data.role in ['admin', 'admin_limited'];
     }
 
     function isScaleMember(scaleId, uid) {
@@ -57,7 +57,7 @@ service cloud.firestore {
           && request.resource.data.destinatarioId != request.auth.uid
           && (
             // Mantém os fluxos existentes de notificação direcionada a administradores.
-            targetIsAdmin(request.resource.data.destinatarioId)
+            isPrivileged(request.resource.data.destinatarioId)
             ||
             // Confirmação: somente integrantes da mesma escala podem trocar
             // notificações; o cliente limita a lista aos participantes do encontro.
@@ -67,7 +67,8 @@ service cloud.firestore {
               && request.resource.data.escalaId == request.resource.data.refId
               && request.resource.data.encontroId is string
               && request.resource.data.encontroId.size() > 0
-              && !targetIsAdmin(request.resource.data.destinatarioId)
+              && !isPrivileged(request.auth.uid)
+              && !isPrivileged(request.resource.data.destinatarioId)
               && isScaleMember(request.resource.data.escalaId, request.auth.uid)
               && isScaleMember(request.resource.data.escalaId, request.resource.data.destinatarioId)
             )
