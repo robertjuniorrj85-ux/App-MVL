@@ -68,6 +68,27 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/escalas/$(scaleId)/encontros/$(encounterId)/participantes/$(uid));
     }
 
+    function validEncounterConfirmationData(scaleId, encounterId, uid) {
+      return request.resource.data.keys().hasOnly([
+          'usuarioId', 'usuarioNome', 'escalaId', 'encontroId', 'status', 'atualizadoEm'
+        ])
+        && request.resource.data.get('usuarioId', '') == uid
+        && request.resource.data.get('escalaId', '') == scaleId
+        && request.resource.data.get('encontroId', '') == encounterId
+        && request.resource.data.get('status', '') in ['confirmado', 'nao_posso'];
+    }
+
+    function canWriteEncounterConfirmation(scaleId, encounterId, uid) {
+      return logged()
+        && (
+          hasPermission('escalas')
+          || (
+            request.auth.uid == uid
+            && isEncounterParticipant(scaleId, encounterId, request.auth.uid)
+          )
+        );
+    }
+
     function canReceiveCommunicationAdmin(uid) {
       let target = get(/databases/$(database)/documents/usuarios/$(uid)).data;
       return exists(/databases/$(database)/documents/usuarios/$(uid))
@@ -255,49 +276,22 @@ service cloud.firestore {
         allow delete: if hasPermission('escalas');
       }
 
+      // Registros legados permanecem disponíveis somente aos gestores para migração/sincronização.
       match /confirmacoes/{uid} {
-        // V11.4.1: integrantes da escala podem visualizar as confirmações
-        // uns dos outros, sem permissão para alterar respostas alheias.
+        allow read: if hasPermission('escalas');
+        allow create, update: if false;
+        allow delete: if hasPermission('escalas');
+      }
+
+      // Respostas novas ficam isoladas no encontro correspondente.
+      match /encontros/{encontroId}/confirmacoes/{uid} {
         allow read: if hasPermission('escalas')
-          || (
-            logged()
-            && request.auth.uid in get(
-              /databases/$(database)/documents/escalas/$(escalaId)
-            ).data.get('integranteIds', [])
-          );
+          || isEncounterParticipant(escalaId, encontroId, request.auth.uid);
 
-        function validOwnEncounterConfirmation(scaleId, uid) {
-          let encounterId = request.resource.data.get('encontroId', '');
-          let answers = request.resource.data.get('encontros', {});
-          return logged()
-            && request.auth.uid == uid
-            && request.resource.data.get('usuarioId', '') == request.auth.uid
-            && encounterId is string
-            && encounterId.size() > 0
-            && request.resource.data.get('status', '') in ['confirmado', 'nao_posso']
-            && answers is map
-            && answers.get(encounterId, '') == request.resource.data.get('status', '')
-            && isEncounterParticipant(scaleId, encounterId, request.auth.uid);
-        }
+        allow create, update: if validEncounterConfirmationData(escalaId, encontroId, uid)
+          && canWriteEncounterConfirmation(escalaId, encontroId, uid);
 
-        allow create: if validOwnEncounterConfirmation(escalaId, uid)
-          && request.resource.data.get('encontros', {}).size() == 1
-          && request.resource.data.get('encontros', {}).keys().hasOnly([request.resource.data.encontroId]);
-
-        allow update: if validOwnEncounterConfirmation(escalaId, uid)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'usuarioNome', 'encontroId', 'status', 'encontros', 'atualizadoEm'
-          ])
-          && request.resource.data.get('encontros', {})
-            .diff(resource.data.get('encontros', {}))
-            .affectedKeys()
-            .hasOnly([request.resource.data.encontroId]);
-
-        allow delete: if hasPermission('escalas')
-          || (
-            logged()
-            && request.auth.uid == uid
-          );
+        allow delete: if hasPermission('escalas');
       }
 
       // Chat de escala legado - preservado na V11.
