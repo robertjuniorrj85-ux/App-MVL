@@ -569,9 +569,15 @@ function scaleParticipants(s={}){return [...new Set(scaleEncounters(s).flatMap(e
 // V11.4.21 - materializa a participação por encontro para autorização nas regras.
 async function syncScaleEncounterParticipants(scaleId,encontros){
   if(!canManage('escalas')||!scaleId)throw new Error('Sem permissão para sincronizar participantes dos encontros.');
+  const encontrosCol=collection(db,'escalas',scaleId,'encontros');
+  const encontrosExistentes=await getDocs(encontrosCol);
+  const idsAtuais=new Set((Array.isArray(encontros)?encontros:[]).map(e=>String(e.id)));
   for(const encontro of (Array.isArray(encontros)?encontros:[])){
     if(!encontro?.id)throw new Error('Encontro sem identificador estável.');
-    const base=collection(db,'escalas',scaleId,'encontros',String(encontro.id),'participantes');
+    const encontroId=String(encontro.id);
+    const encontroRef=doc(encontrosCol,encontroId);
+    await setDoc(encontroRef,{id:encontroId,nome:String(encontro.nome||''),data:String(encontro.data||''),horario:String(encontro.horario||'')});
+    const base=collection(db,'escalas',scaleId,'encontros',encontroId,'participantes');
     const atuais=await getDocs(base);
     const existentes=new Map(atuais.docs.map(snap=>[snap.id,snap.data()||{}]));
     const desejados=[...new Set((encontro.integranteIds||[]).filter(uid=>typeof uid==='string'&&uid.trim()))];
@@ -579,8 +585,8 @@ async function syncScaleEncounterParticipants(scaleId,encontros){
     const ops=[];
     for(const uid of desejados){
       const atual=existentes.get(uid);
-      if(!atual||atual.uid!==uid||atual.escalaId!==scaleId||atual.encontroId!==String(encontro.id)){
-        ops.push({kind:'set',ref:doc(base,uid),data:{uid,escalaId,encontroId:String(encontro.id),atualizadoEm:serverTimestamp()}});
+      if(!atual||atual.uid!==uid||atual.escalaId!==scaleId||atual.encontroId!==encontroId){
+        ops.push({kind:'set',ref:doc(base,uid),data:{uid,escalaId,encontroId,atualizadoEm:serverTimestamp()}});
       }
     }
     atuais.forEach(snap=>{if(!desiredSet.has(snap.id))ops.push({kind:'delete',ref:snap.ref});});
@@ -592,6 +598,17 @@ async function syncScaleEncounterParticipants(scaleId,encontros){
       }
       await batch.commit();
     }
+  }
+  // Remove associações de encontros que foram excluídos da escala.
+  for(const oldEncounter of encontrosExistentes.docs){
+    if(idsAtuais.has(oldEncounter.id))continue;
+    const participants=await getDocs(collection(db,'escalas',scaleId,'encontros',oldEncounter.id,'participantes'));
+    for(let i=0;i<participants.docs.length;i+=450){
+      const batch=writeBatch(db);
+      participants.docs.slice(i,i+450).forEach(snap=>batch.delete(snap.ref));
+      await batch.commit();
+    }
+    await deleteDoc(oldEncounter.ref);
   }
 }
 function principalEncounter(s={}){const es=scaleEncounters(s);return es.find(e=>e.principal)||es.slice().sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).at(-1)||null;}
