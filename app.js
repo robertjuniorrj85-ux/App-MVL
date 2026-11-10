@@ -660,13 +660,13 @@ async function syncScaleConfirmation(scaleId,encontros,encontroId,respostaStatus
     return {ok:false,registroOk:false,pushAceito:false,erro:String(e)};
   }
 }
-async function syncScaleMembersConfirmationPush(escalaId,encontroId,respostaStatus){
+async function syncScaleMembersConfirmationPush(escalaId,encontroId,respostaStatus,nomeIntegrante){
   try{
     const idToken=await currentUser.getIdToken();
     const r=await fetch(MVL_PUSH_ENDPOINT,{
       method:'POST',
       headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({idToken,tipo:'confirmacao_integrantes',escalaId,encontroId,respostaStatus})
+      body:JSON.stringify({idToken,tipo:'confirmacao_integrantes',escalaId,encontroId,respostaStatus,nomeIntegrante})
     });
     const j=await r.json().catch(()=>({ok:false,erro:'Resposta inválida do servidor.'}));
     return {
@@ -761,7 +761,7 @@ async function setEncounterConfirmation(scale,encounterId,status){
   // Fluxo independente: notifica somente os demais integrantes deste encontro.
   let pushIntegrantes={ok:false,pushAceito:false,erro:'Notificação dos integrantes não confirmada.'};
   try{
-    pushIntegrantes=await syncScaleMembersConfirmationPush(scale.id,encounterId,status);
+    pushIntegrantes=await syncScaleMembersConfirmationPush(scale.id,encounterId,status,nome);
   }catch(e){
     console.error('Falha no push dos integrantes:',e);
   }
