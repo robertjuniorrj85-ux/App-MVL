@@ -1,0 +1,123 @@
+// PROPOSTA V9.3 — revisar e publicar manualmente no Firebase Console.
+// Este arquivo NÃO está conectado a firebase.json e NÃO é publicado automaticamente.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function logged() {
+      return request.auth != null;
+    }
+
+    function admin() {
+      return logged()
+        && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function targetIsAdmin(uid) {
+      return get(/databases/$(database)/documents/usuarios/$(uid)).data.role == 'admin';
+    }
+
+    function isScaleMember(scaleId, uid) {
+      return exists(/databases/$(database)/documents/escalas/$(scaleId))
+        && uid in get(/databases/$(database)/documents/escalas/$(scaleId)).data.integranteIds;
+    }
+
+    match /usuarios/{uid} {
+      allow read: if logged();
+      allow create: if logged()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'member';
+      allow update: if admin()
+        || (logged()
+          && request.auth.uid == uid
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'nome','funcao','email','mustChangePassword','ultimoAcesso','atualizadoEm'
+          ]));
+      allow delete: if admin();
+    }
+
+    match /mensagens/{id} {
+      allow create: if logged()
+        && request.resource.data.autorId == request.auth.uid
+        && request.resource.data.status == 'nova';
+      allow read: if admin()
+        || (logged() && resource.data.autorId == request.auth.uid);
+      allow update, delete: if admin();
+    }
+
+    match /notificacoes/{id} {
+      allow read: if logged()
+        && resource.data.destinatarioId == request.auth.uid;
+
+      allow create: if admin()
+        || (
+          logged()
+          && request.resource.data.remetenteId == request.auth.uid
+          && request.resource.data.destinatarioId is string
+          && request.resource.data.destinatarioId != request.auth.uid
+          && (
+            // Mantém os fluxos existentes de notificação direcionada a administradores.
+            targetIsAdmin(request.resource.data.destinatarioId)
+            ||
+            // Confirmação: somente integrantes da mesma escala podem trocar
+            // notificações; o cliente limita a lista aos participantes do encontro.
+            (
+              request.resource.data.tipo == 'confirmacao_escala'
+              && request.resource.data.refId is string
+              && request.resource.data.escalaId == request.resource.data.refId
+              && request.resource.data.encontroId is string
+              && request.resource.data.encontroId.size() > 0
+              && !targetIsAdmin(request.resource.data.destinatarioId)
+              && isScaleMember(request.resource.data.escalaId, request.auth.uid)
+              && isScaleMember(request.resource.data.escalaId, request.resource.data.destinatarioId)
+            )
+            ||
+            // Mantém o chat de escala existente.
+            (
+              request.resource.data.tipo == 'chat_escala'
+              && request.resource.data.refId is string
+              && isScaleMember(request.resource.data.refId, request.auth.uid)
+              && isScaleMember(request.resource.data.refId, request.resource.data.destinatarioId)
+            )
+          )
+        );
+
+      // O destinatário só pode marcar a própria notificação como lida.
+      allow update: if logged()
+        && resource.data.destinatarioId == request.auth.uid
+        && request.resource.data.destinatarioId == resource.data.destinatarioId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lida','lidaEm']);
+
+      allow delete: if admin();
+    }
+
+    match /escalas/{escalaId} {
+      allow read: if logged();
+      allow create, update, delete: if admin();
+
+      match /confirmacoes/{uid} {
+        allow read: if admin() || (logged() && request.auth.uid == uid);
+        allow create, update: if logged()
+          && request.auth.uid == uid
+          && request.resource.data.usuarioId == request.auth.uid
+          && request.resource.data.status in ['confirmado','nao_posso'];
+        allow delete: if admin() || (logged() && request.auth.uid == uid);
+      }
+
+      match /chat/{msgId} {
+        allow read, create: if admin() || isScaleMember(escalaId, request.auth.uid);
+        allow delete: if admin() || (logged() && resource.data.autorId == request.auth.uid);
+        allow update: if false;
+      }
+    }
+
+    match /agenda/{id} { allow read: if logged(); allow create, update, delete: if admin(); }
+    match /repertorios/{id} { allow read: if logged(); allow create, update, delete: if admin(); }
+    match /musicas/{id} { allow read: if logged(); allow create, update, delete: if admin(); }
+    match /avisos/{id} { allow read: if logged(); allow create, update, delete: if admin(); }
+    match /arquivos/{id} { allow read: if logged(); allow create, update, delete: if admin(); }
+    match /multitracks/{id} { allow read: if logged(); allow create, update, delete: if admin(); }
+    match /links/{id} { allow read: if logged(); allow create, update, delete: if admin(); }
+    match /membros/{id} { allow read: if logged(); allow create, update, delete: if admin(); }
+  }
+}
