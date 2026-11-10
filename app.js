@@ -106,7 +106,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.18';
+const MVL_VERSION='11.4.19';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -627,7 +627,7 @@ async function saveScale(){
   syncScaleReminder({id:scaleId,...payload}).catch(e=>console.error('Sincronização de encontros/alertas',e));
 }
 async function syncAllScheduledData(){if(!canManage('escalas')&&!canManage('membros'))return;await syncBirthdaysForPush();for(const scale of scalesCache){await syncScaleReminder(scale);try{const snap=await getDocs(collection(db,'escalas',scale.id,'confirmacoes'));for(const d of snap.docs){const x=d.data();if(x?.usuarioId)await syncScaleConfirmationAsAdmin(scale.id,x.usuarioId,x.encontros||{},x.status||'');}}catch(e){console.warn('Confirmações para lembretes',scale.id,e);}}}
-async function syncScaleConfirmationAsAdmin(scaleId,usuarioId,encontros,status=''){if(!canManage('escalas'))return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync_admin',escalaId,usuarioId,encontros,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
+async function syncScaleConfirmationAsAdmin(scaleId,usuarioId,encontros,status=''){if(!canManage('escalas'))return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'confirmacao_sync_admin',escalaId:scaleId,usuarioId,encontros,status})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
 async function syncScaleReminder(scale){if(!canManage('escalas')||!scale?.id)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_sync',escala:{id:scale.id,evento:scale.evento||'Escala',cantorNome:scaleSingerName(scale),integranteIds:scaleParticipants(scale),encontros:scaleEncounters(scale)}})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('escala_sync',e);return false;}}
 async function syncScaleDelete(scaleId){if(!canManage('escalas')||!scaleId)return false;try{const idToken=await currentUser.getIdToken();const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'escala_delete',escalaId})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){return false;}}
 async function syncScaleConfirmation(scaleId,encontros,encontroId,respostaStatus){
@@ -639,7 +639,7 @@ async function syncScaleConfirmation(scaleId,encontros,encontroId,respostaStatus
       body:JSON.stringify({
         idToken,
         tipo:'confirmacao_sync',
-        escalaId,
+        escalaId: scaleId,
         encontros,
         encontroId,
         respostaStatus
@@ -658,6 +658,27 @@ async function syncScaleConfirmation(scaleId,encontros,encontroId,respostaStatus
   }catch(e){
     console.error('Erro ao sincronizar confirmação:',e);
     return {ok:false,registroOk:false,pushAceito:false,erro:String(e)};
+  }
+}
+async function syncScaleMembersConfirmationPush(escalaId,encontroId,respostaStatus){
+  try{
+    const idToken=await currentUser.getIdToken();
+    const r=await fetch(MVL_PUSH_ENDPOINT,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({idToken,tipo:'confirmacao_integrantes',escalaId,encontroId,respostaStatus})
+    });
+    const j=await r.json().catch(()=>({ok:false,erro:'Resposta inválida do servidor.'}));
+    return {
+      ok:j.ok===true,
+      pushAceito:j.pushAceito===true,
+      totalDestinatarios:Number(j.totalDestinatarios||0),
+      totalSubscriptions:Number(j.totalSubscriptions||0),
+      erro:j.erro||j.pushErro||''
+    };
+  }catch(e){
+    console.error('Erro ao notificar integrantes da escala:',e);
+    return {ok:false,pushAceito:false,erro:String(e)};
   }
 }
 async function getScaleConfirmations(s){
@@ -715,13 +736,15 @@ async function setEncounterConfirmation(scale,encounterId,status){
   const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
   const nome=currentUserData.nome||currentUser.email;
   const texto=`${nome} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;
+  // Resposta de integrante: notificação interna somente aos demais participantes
+  // deste encontro. Administradores seguem no fluxo administrativo separado.
   const admins=adminIdsFor('escalas');
-  const destinatarios=[...new Set([...(enc?.integranteIds||[]),...admins])]
-    .filter(id=>id&&id!==currentUser.uid);
+  const destinatarios=[...new Set((enc?.integranteIds||[])
+    .filter(id=>typeof id==='string'&&id&&id!==currentUser.uid))];
 
   let notificacaoInternaOk=true;
   try{
-    await createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId});
+    await createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId:encounterId});
   }catch(e){
     notificacaoInternaOk=false;
     console.error('Falha ao criar notificações internas da confirmação:',e);
@@ -735,18 +758,26 @@ async function setEncounterConfirmation(scale,encounterId,status){
     console.error('Falha ao sincronizar confirmação com o Apps Script:',e);
   }
 
-  // Compatibilidade com o fluxo que enviava o push administrativo diretamente.
-  // Só usa o envio legado quando a sincronização principal não confirma o push,
-  // evitando duplicidade quando o endpoint confirmacao_sync já o aceitou.
+  // Fluxo independente: notifica somente os demais integrantes deste encontro.
+  let pushIntegrantes={ok:false,pushAceito:false,erro:'Notificação dos integrantes não confirmada.'};
+  try{
+    pushIntegrantes=await syncScaleMembersConfirmationPush(scale.id,encounterId,status);
+  }catch(e){
+    console.error('Falha no push dos integrantes:',e);
+  }
+
+  // Mantém o fluxo administrativo original, separado do aviso aos integrantes.
+  // O Apps Script determina os administradores autorizados e exclui o remetente.
   let pushFallbackOk=true;
   if(!sincronizacao?.pushAceito&&admins.length){
     pushFallbackOk=await enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins);
-    if(!pushFallbackOk)console.error('O envio de push administrativo pelo fluxo de compatibilidade também falhou.');
+    if(!pushFallbackOk)console.error('O envio de push administrativo também falhou.');
   }
 
   let mensagem=status==='confirmado'?'Presença registrada neste encontro.':'Resposta registrada neste encontro.';
-  if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas.';
+  if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas. Consulte o console para o código técnico do Firestore.';
   if(!sincronizacao?.registroOk)mensagem+=' O serviço de sincronização não confirmou o registro: '+(sincronizacao.erro||sincronizacao.pushErro||'erro não informado pelo servidor')+'.';
+  if(!pushIntegrantes?.pushAceito)mensagem+=' O push aos demais integrantes não foi confirmado: '+(pushIntegrantes.erro||'erro não informado')+'.';
   if(!sincronizacao?.pushAceito&&!pushFallbackOk)mensagem+=' O envio de push ao administrador também não foi confirmado.';
   alert(mensagem);
   renderScales().catch(e=>console.error('Falha ao atualizar a lista de escalas:',e));
@@ -1114,21 +1145,46 @@ function mvlShowReactionUsers(reactions,emoji){
   const overlay=document.createElement('div');overlay.id='mvl-reactions-overlay';overlay.className='mvl-reactions-overlay';
   overlay.innerHTML=`<div class="mvl-reactions-dialog" role="dialog" aria-modal="true" aria-label="Quem reagiu"><div class="mvl-reactions-header"><strong>${escapeHtml(emoji)} Quem reagiu</strong><button type="button" class="mvl-reactions-close" aria-label="Fechar">✕</button></div>${filtered.map(r=>{const u=usersCache.find(x=>x.id===r.usuarioId)||{nome:userName(r.usuarioId)};return `<div class="mvl-reactions-person">${memberAvatarHtml(u,'mvl-reaction-avatar')}<span>${escapeHtml(u.nome||u.email||'Integrante')}</span><b>${escapeHtml(r.emoji||'')}</b></div>`;}).join('')}</div>`;
   overlay.onclick=e=>{if(e.target===overlay||e.target.closest('.mvl-reactions-close'))overlay.remove();};
-  document.body.appendChild(overlay);overlay.querySelector('.mvl-reactions-close').focus();
-}
-async function loadMessages(){const all=await safeDocs('mensagens'),visible=(canManage('comunicacao')?all:all.filter(m=>m.autorId===currentUser.uid)).sort(byCreatedDesc);listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhuma mensagem ainda.</div>';return;}visible.forEach(m=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<span class="status-pill ${m.status==='nova'?'new':m.status==='resolvida'?'done':''}">${escapeHtml(m.status||'nova')}</span><h3>${escapeHtml(m.tipo||'Mensagem')}</h3>${canManage('comunicacao')?`<div class="item-meta"><b>De:</b> ${escapeHtml(m.autorNome||m.autorEmail||'')}</div>`:''}<div class="item-meta">${escapeHtml(m.mensagem||'')}</div>${canManage('comunicacao')?'<div class="item-actions"><button class="edit-btn">Marcar lida</button><button class="confirm-btn">Resolvida</button><button class="delete-btn msg-delete">Excluir</button></div>':''}`;if(canManage('comunicacao')){card.querySelector('.edit-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'lida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.confirm-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'resolvida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.msg-delete').onclick=async()=>{if(confirm('Excluir esta mensagem privada?')){await deleteDoc(doc(db,'mensagens',m.id));loadMessages();}};}listEl.appendChild(card);});}
-
-// NOTIFICAÇÕES INTERNAS: 1 DOCUMENTO POR DESTINATÁRIO
 async function createNotifications(recipientIds,title,message,type,refId='',metadata={}){
-  const ids=[...new Set(recipientIds)].filter(Boolean);if(!ids.length)return;
-  const batch=writeBatch(db);
-  ids.forEach(uid=>{
-    const ref=doc(collection(db,'notificacoes'));
-    batch.set(ref,{destinatarioId:uid,remetenteId:currentUser.uid,titulo:title,mensagem:message,tipo,refId,...metadata,lida:false,criadoEm:serverTimestamp()});
+  if(!currentUser?.uid)throw new Error('Usuário não autenticado para criar notificações.');
+  const ids=[...new Set((Array.isArray(recipientIds)?recipientIds:[])
+    .filter(uid=>typeof uid==='string'&&uid.trim())
+    .map(uid=>uid.trim()))]
+    .filter(uid=>uid!==currentUser.uid);
+  if(!ids.length)return {created:0};
+
+  const payloadFor=uid=>({
+    destinatarioId:uid,
+    remetenteId:currentUser.uid,
+    titulo:String(title||'MVL'),
+    mensagem:String(message||''),
+    tipo:String(type||'geral'),
+    refId:String(refId||''),
+    ...(metadata&&typeof metadata==='object'&&!Array.isArray(metadata)?metadata:{}),
+    lida:false,
+    criadoEm:serverTimestamp()
   });
-  await batch.commit();
+
+  // Firestore aceita no máximo 500 operações por lote; usamos margem de segurança.
+  for(let start=0;start<ids.length;start+=450){
+    const batch=writeBatch(db);
+    ids.slice(start,start+450).forEach(uid=>{
+      batch.set(doc(collection(db,'notificacoes')),payloadFor(uid));
+    });
+    try{
+      await batch.commit();
+    }catch(error){
+      console.error('createNotifications: falha ao gravar lote', {
+        code:error?.code||'unknown',
+        message:error?.message||String(error),
+        destinatarios:ids.length,
+        loteInicio:start
+      });
+      throw error;
+    }
+  }
+  return {created:ids.length};
 }
-function bindNotifications(){
   if(notifUnsub)notifUnsub();const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));notifUnsub=onSnapshot(q,snap=>{const relevant=snap.docs.map(d=>({id:d.id,...d.data()})),unread=relevant.filter(n=>n.lida!==true);$('notif-count').textContent=String(unread.length);$('notif-count').classList.toggle('hide',unread.length===0);for(const n of unread){if(!lastNotificationIds.has(n.id)){lastNotificationIds.add(n.id);if(document.visibilityState==='visible')maybeBrowserNotify(n);}}},e=>console.error('notifications',e));
 }
 function maybeBrowserNotify(n){if(!('Notification'in window)||Notification.permission!=='granted')return;try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}}
@@ -1347,4 +1403,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.18').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.19').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
