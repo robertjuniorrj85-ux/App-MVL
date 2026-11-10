@@ -612,7 +612,7 @@ case 'usuario_excluir': {
         const escalaId = String(body.escalaId || '');
         const encontroId = String(body.encontroId || '');
         const respostaStatus = String(body.respostaStatus || '');
-        const nomeIntegrante = String(body.nomeIntegrante || '').trim().replace(/[\\r\\n\\t]+/g, ' ').substring(0, 80);
+        const nomeIntegrante = String(body.nomeIntegrante || '').trim().replace(/[\r\n\t]+/g, ' ').substring(0, 80);
         if (!escalaId || !encontroId || !nomeIntegrante ||
             !['confirmado', 'nao_posso'].includes(respostaStatus)) {
           return jsonResponse({ok:false, erro:'Dados da notificação de confirmação inválidos.'});
