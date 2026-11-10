@@ -565,6 +565,31 @@ function scaleEncounters(s={}){
   return [];
 }
 function scaleParticipants(s={}){return [...new Set(scaleEncounters(s).flatMap(e=>e.integranteIds||[]))];}
+ 
+// V11.4.21 - materializa a participação por encontro para autorização nas regras.
+async function syncScaleEncounterParticipants(scaleId,encontros){
+  if(!canManage('escalas')||!scaleId)throw new Error('Sem permissão para sincronizar participantes dos encontros.');
+  for(const encontro of (Array.isArray(encontros)?encontros:[])){
+    if(!encontro?.id)throw new Error('Encontro sem identificador estável.');
+    const base=collection(db,'escalas',scaleId,'encontros',String(encontro.id),'participantes');
+    const atuais=await getDocs(base);
+    const desejados=[...new Set((encontro.integranteIds||[]).filter(uid=>typeof uid==='string'&&uid.trim()))];
+    const desiredSet=new Set(desejados);
+    const ops=[];
+    for(const uid of desejados){
+      ops.push({kind:'set',ref:doc(base,uid),data:{uid,escalaId,encontroId:String(encontro.id),atualizadoEm:serverTimestamp()}});
+    }
+    atuais.forEach(snap=>{if(!desiredSet.has(snap.id))ops.push({kind:'delete',ref:snap.ref});});
+    for(let i=0;i<ops.length;i+=450){
+      const batch=writeBatch(db);
+      for(const op of ops.slice(i,i+450)){
+        if(op.kind==='set')batch.set(op.ref,op.data);
+        else batch.delete(op.ref);
+      }
+      await batch.commit();
+    }
+  }
+}
 function principalEncounter(s={}){const es=scaleEncounters(s);return es.find(e=>e.principal)||es.slice().sort((a,b)=>(a.data+(a.horario||'')).localeCompare(b.data+(b.horario||''))).at(-1)||null;}
 function encounterDateTime(e={}){return (e.data||'')+'T'+(e.horario||'23:59');}
 function nextEncounterOfScale(s={},today=dateKey(new Date())){return scaleEncounters(s).filter(e=>e.data&&e.data>=today).sort((a,b)=>encounterDateTime(a).localeCompare(encounterDateTime(b)))[0]||null;}
@@ -620,7 +645,20 @@ async function saveScale(){
   if(!evento||!cantorId){alert('Informe o evento e selecione o cantor da escala.');return;}const err=validateEncounters(encontros);if(err){alert(err);return;}
   const integranteIds=[...new Set(encontros.flatMap(e=>e.integranteIds||[]))];if(!integranteIds.includes(cantorId))integranteIds.push(cantorId);
   const principal=encontros.find(e=>e.principal)||encontros[encontros.length-1];const payload={evento,equipeResponsavel,cantorId,cantorNome:userName(cantorId),repertorioId,encontros,integranteIds,data:principal.data,horario:principal.horario||'',lembretes:{}};const notifyNow=$('notify-scaled').checked;let scaleId=editingId;
-  saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'escalas',editingId),{...payload,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});else{const ref=await addDoc(collection(db,'escalas'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});scaleId=ref.id;}}catch(e){console.error('Falha ao salvar escala',e);alert('Não foi possível salvar a escala.');saveBtn.disabled=false;return;}
+  saveBtn.disabled=true;
+  try{
+    if(editingId)await updateDoc(doc(db,'escalas',editingId),{...payload,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});
+    else{
+      const ref=await addDoc(collection(db,'escalas'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});
+      scaleId=ref.id;
+    }
+    await syncScaleEncounterParticipants(scaleId,encontros);
+  }catch(e){
+    console.error('Falha ao salvar escala/sincronizar participantes por encontro',e);
+    alert('A escala pode ter sido salva, mas não foi possível sincronizar os participantes dos encontros. Não considere a autorização por encontro concluída. Verifique a conexão e tente salvar novamente.');
+    saveBtn.disabled=false;
+    return;
+  }
   alert('Escala salva com sucesso.');editingId=null;await refreshCaches();renderScales().catch(e=>console.error('Atualização da lista de escalas',e));saveBtn.disabled=false;
   const texto=`${evento} • ${userName(cantorId)} — ${dateBR(principal.data)}${principal.horario?' às '+principal.horario:''}.`;
   if(notifyNow&&integranteIds.length){const tituloEscala=equipeResponsavel==='nova_geracao'?'⚡ Nova escala Nova Geração':'🎵 Nova escala MVL';const escalaUrl=`https://robertjuniorrj85-ux.github.io/App-MVL/?open=escala&id=${encodeURIComponent(scaleId)}`;createNotifications(integranteIds,tituloEscala,texto,'escala',scaleId).catch(e=>console.error('Notificação interna da escala',e));enviarPushMVL('escala',tituloEscala,texto,integranteIds,escalaUrl).catch(e=>console.error('Push da escala',e));}
