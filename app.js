@@ -639,7 +639,7 @@ async function syncScaleConfirmation(scaleId,encontros,encontroId,respostaStatus
       body:JSON.stringify({
         idToken,
         tipo:'confirmacao_sync',
-        escalaId,
+        escalaId: scaleId,
         encontros,
         encontroId,
         respostaStatus
