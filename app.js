@@ -618,7 +618,8 @@ function validateEncounters(es){
   if(!es.some(e=>e.principal))es[es.length-1].principal=true;return '';
 }
 async function renderScales(editItem=null){
-  showSectionHeader('Escalas','Uma escala, vários encontros: ensaio vocal, ensaio geral, culto e outros.');await refreshCaches();const allowed=canManage('escalas');adminPanel.classList.toggle('hide',!allowed);
+  showSectionHeader('Escalas','Uma escala, vários encontros: ensaio vocal, ensaio geral, culto e outros.');await refreshCaches();const allowed=canManage('escalas');
+  if(allowed){for(const s of scalesCache){try{await syncScaleEncounterParticipants(s.id,scaleEncounters(s));}catch(e){console.warn('Migração de participantes por encontro pendente',s.id,e);}}}adminPanel.classList.toggle('hide',!allowed);
   if(allowed){
     $('form-title').textContent=editItem?'Editar escala':'Nova escala';editingId=editItem?.id||null;cancelEditBtn.classList.toggle('hide',!editItem);saveBtn.textContent=editItem?'Atualizar':'Salvar';const d=editItem||{};
     dynamicForm.innerHTML=`<div class="form-grid"><input id="scale-event" placeholder="Culto / Evento" value="${escapeAttr(d.evento||'')}"><label class="field-label">Equipe responsável<select id="scale-team"><option value="mvl" ${scaleTeam(d)==='mvl'?'selected':''}>MVL</option><option value="nova_geracao" ${scaleTeam(d)==='nova_geracao'?'selected':''}>⚡ Nova Geração</option></select></label><select id="scale-singer"><option value="">Selecione o cantor da escala</option>${sortedUsersForTeam(scaleTeam(d)).map(u=>`<option value="${u.id}" ${d.cantorId===u.id?'selected':''}>${memberIcon(u)} ${escapeHtml(u.nome||u.email||u.id)} — ${memberTeams(u).map(t=>t==='nova_geracao'?'Nova Geração':'MVL').join(' + ')}</option>`).join('')}</select><select id="scale-rep"><option value="">Sem repertório vinculado</option>${repertoiresCache.map(r=>`<option value="${r.id}" ${d.repertorioId===r.id?'selected':''}>${escapeHtml(r.nome||'Repertório')}</option>`).join('')}</select><label class="checkbox-row"><input id="notify-scaled" type="checkbox" ${editItem?'':'checked'}><span><b>Notificar participantes ao salvar</b><br><small class="muted">Envia o aviso sem interferir no salvamento da escala.</small></span></label><div class="subpanel encounters-panel"><div class="subpanel-head"><div><b>📅 Encontros desta escala</b><small class="muted block">Cada encontro tem data, horário, participantes, confirmação e alertas próprios.</small></div><button id="add-encounter" type="button" class="secondary small-btn">+ Adicionar encontro</button></div><div id="encounter-list"></div></div></div>`;
@@ -754,10 +755,13 @@ async function setEncounterConfirmation(scale,encounterId,status){
     const ref=doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid);
     const old=await getDoc(ref);
     data=old.exists()?old.data():{};
+    const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
+    if(!enc||(enc.integranteIds||[]).indexOf(currentUser.uid)<0)throw new Error('Usuário não pertence a este encontro.');
     const encontros={...(data.encontros||{}),[encounterId]:status};
     await setDoc(ref,{
       usuarioId:currentUser.uid,
       usuarioNome:currentUserData.nome||currentUser.email,
+      encontroId:String(encounterId),
       status,
       encontros,
       atualizadoEm:serverTimestamp()
