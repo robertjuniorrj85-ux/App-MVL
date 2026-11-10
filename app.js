@@ -106,7 +106,7 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.19';
+const MVL_VERSION='11.4.21';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -752,7 +752,26 @@ async function buildScaleCard(s){
   card.innerHTML=`<div class="scale-headline"><div><div class="scale-team-label ${scaleTeam(s)}">${teamName(scaleTeam(s))}</div><h3>🎤 ${escapeHtml(scaleSingerName(s))}</h3>${_concluida?'<span class="status-pill done">Concluída</span>':''}<div class="item-meta">${escapeHtml(s.evento||'Escala')}</div></div></div><div class="encounters-view">${encountersHtml}</div>${repHtml}<div class="item-actions"><button class="edit-btn chat-btn">💬 Chat desta escala</button>${manageScale?'<button class="edit-btn edit-scale">Editar</button><button class="delete-btn delete-scale">Excluir</button>':''}</div>`;
   card.querySelectorAll('.scale-song').forEach(b=>b.onclick=()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.rep-btn')?.addEventListener('click',()=>openRepertoireDetail(s.repertorioId,'escalas',s.cantorId||''));card.querySelector('.chat-btn').onclick=()=>openScaleChat(s.id);card.querySelector('.edit-scale')?.addEventListener('click',()=>{renderScales(s);scrollToAdminForm();});card.querySelector('.delete-scale')?.addEventListener('click',async()=>{if(confirm('Excluir escala?')){await deleteScaleCascade(s.id);await refreshCaches();renderScales();}});return card;
 }
-async function deleteScaleCascade(scaleId){const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();syncScaleDelete(scaleId).catch(()=>{});}
+async function deleteScaleCascade(scaleId){
+  const scale=scalesCache.find(s=>s.id===scaleId)||{};
+  const ops=[];
+  const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);
+  conf?.docs.forEach(d=>ops.push({kind:'delete',ref:d.ref}));
+  const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);
+  chat?.docs.forEach(d=>ops.push({kind:'delete',ref:d.ref}));
+  for(const enc of scaleEncounters(scale)){
+    if(!enc?.id)continue;
+    const participants=await getDocs(collection(db,'escalas',scaleId,'encontros',String(enc.id),'participantes')).catch(()=>null);
+    participants?.docs.forEach(d=>ops.push({kind:'delete',ref:d.ref}));
+  }
+  ops.push({kind:'delete',ref:doc(db,'escalas',scaleId)});
+  for(let i=0;i<ops.length;i+=450){
+    const batch=writeBatch(db);
+    ops.slice(i,i+450).forEach(op=>batch.delete(op.ref));
+    await batch.commit();
+  }
+  syncScaleDelete(scaleId).catch(()=>{});
+}
 async function setEncounterConfirmation(scale,encounterId,status){
   let data={};
   try{
