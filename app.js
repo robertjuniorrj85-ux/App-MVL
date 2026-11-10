@@ -780,6 +780,7 @@ async function deleteScaleCascade(scaleId){
     if(!enc?.id)continue;
     const participants=await getDocs(collection(db,'escalas',scaleId,'encontros',String(enc.id),'participantes')).catch(()=>null);
     participants?.docs.forEach(d=>ops.push({kind:'delete',ref:d.ref}));
+    ops.push({kind:'delete',ref:doc(db,'escalas',scaleId,'encontros',String(enc.id))});
   }
   ops.push({kind:'delete',ref:doc(db,'escalas',scaleId)});
   for(let i=0;i<ops.length;i+=450){
