@@ -266,11 +266,32 @@ service cloud.firestore {
             ).data.get('integranteIds', [])
           );
 
-        allow create, update: if logged()
-          && request.auth.uid == uid
-          && request.resource.data.usuarioId == request.auth.uid
-          && request.resource.data.encontroId is string
-          && isEncounterParticipant(escalaId, request.resource.data.encontroId, request.auth.uid);
+        function validOwnEncounterConfirmation(scaleId, uid) {
+          let encounterId = request.resource.data.get('encontroId', '');
+          let answers = request.resource.data.get('encontros', {});
+          return logged()
+            && request.auth.uid == uid
+            && request.resource.data.get('usuarioId', '') == request.auth.uid
+            && encounterId is string
+            && encounterId.size() > 0
+            && request.resource.data.get('status', '') in ['confirmado', 'nao_posso']
+            && answers is map
+            && answers.get(encounterId, '') == request.resource.data.get('status', '')
+            && isEncounterParticipant(scaleId, encounterId, request.auth.uid);
+        }
+
+        allow create: if validOwnEncounterConfirmation(escalaId, uid)
+          && request.resource.data.get('encontros', {}).size() == 1
+          && request.resource.data.get('encontros', {}).keys().hasOnly([request.resource.data.encontroId]);
+
+        allow update: if validOwnEncounterConfirmation(escalaId, uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'usuarioNome', 'encontroId', 'status', 'encontros', 'atualizadoEm'
+          ])
+          && request.resource.data.get('encontros', {})
+            .diff(resource.data.get('encontros', {}))
+            .affectedKeys()
+            .hasOnly([request.resource.data.encontroId]);
 
         allow delete: if hasPermission('escalas')
           || (
