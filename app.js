@@ -735,10 +735,19 @@ async function setEncounterConfirmation(scale,encounterId,status){
     console.error('Falha ao sincronizar confirmação com o Apps Script:',e);
   }
 
+  // Compatibilidade com o fluxo que enviava o push administrativo diretamente.
+  // Só usa o envio legado quando a sincronização principal não confirma o push,
+  // evitando duplicidade quando o endpoint confirmacao_sync já o aceitou.
+  let pushFallbackOk=true;
+  if(!sincronizacao?.pushAceito&&admins.length){
+    pushFallbackOk=await enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins);
+    if(!pushFallbackOk)console.error('O envio de push administrativo pelo fluxo de compatibilidade também falhou.');
+  }
+
   let mensagem=status==='confirmado'?'Presença registrada neste encontro.':'Resposta registrada neste encontro.';
   if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas.';
-  if(!sincronizacao?.registroOk)mensagem+=' O serviço de notificações não confirmou o processamento: '+(sincronizacao.erro||sincronizacao.pushErro||'erro não informado pelo servidor')+'.';
-  else if(!sincronizacao.pushAceito)mensagem+=' O registro foi processado, mas o push não foi aceito: '+(sincronizacao.pushErro||'nenhuma inscrição válida encontrada')+'.';
+  if(!sincronizacao?.registroOk)mensagem+=' O serviço de sincronização não confirmou o registro: '+(sincronizacao.erro||sincronizacao.pushErro||'erro não informado pelo servidor')+'.';
+  if(!sincronizacao?.pushAceito&&!pushFallbackOk)mensagem+=' O envio de push ao administrador também não foi confirmado.';
   alert(mensagem);
   renderScales().catch(e=>console.error('Falha ao atualizar a lista de escalas:',e));
   return true;
