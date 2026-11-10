@@ -1,0 +1,508 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function logged() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(
+        /databases/$(database)/documents/usuarios/$(request.auth.uid)
+      ).data;
+    }
+
+    function isPrincipalAdmin() {
+      return logged()
+        && userDoc().get('role', '') == 'admin'
+        && userDoc().get('adminPrincipal', false) == true;
+    }
+
+    function isLimitedAdmin() {
+      return logged()
+        && (
+          userDoc().get('role', '') == 'admin_limited'
+          ||
+          (
+            userDoc().get('role', '') == 'admin'
+            && userDoc().get('adminPrincipal', false) == false
+          )
+        );
+    }
+
+    function hasPermission(permission) {
+      return isPrincipalAdmin()
+        ||
+        (
+          isLimitedAdmin()
+          &&
+          (
+            userDoc()
+              .get('adminPermissions', {})
+              .get(permission, false) == true
+            ||
+            userDoc()
+              .get('permissoes', {})
+              .get(permission, false) == true
+          )
+        );
+    }
+
+    function canMessages() {
+      return hasPermission('mensagens')
+        || hasPermission('comunicacao');
+    }
+
+    function isScaleMember(scaleId) {
+      return logged()
+        && request.auth.uid in get(
+          /databases/$(database)/documents/escalas/$(scaleId)
+        ).data.integranteIds;
+    }
+
+    function isEncounterParticipant(scaleId, encounterId, uid) {
+      return logged()
+        && uid is string
+        && encounterId is string
+        && exists(/databases/$(database)/documents/escalas/$(scaleId)/encontros/$(encounterId)/participantes/$(uid));
+    }
+
+    function validEncounterConfirmationData(scaleId, encounterId, uid) {
+      return request.resource.data.keys().hasOnly([
+          'usuarioId', 'usuarioNome', 'escalaId', 'encontroId', 'status', 'atualizadoEm'
+        ])
+        && request.resource.data.get('usuarioId', '') == uid
+        && request.resource.data.get('escalaId', '') == scaleId
+        && request.resource.data.get('encontroId', '') == encounterId
+        && request.resource.data.get('status', '') in ['confirmado', 'nao_posso'];
+    }
+
+    function canWriteEncounterConfirmation(scaleId, encounterId, uid) {
+      return logged()
+        && (
+          hasPermission('escalas')
+          || (
+            request.auth.uid == uid
+            && isEncounterParticipant(scaleId, encounterId, request.auth.uid)
+          )
+        );
+    }
+
+    function canReceiveCommunicationAdmin(uid) {
+      let target = get(/databases/$(database)/documents/usuarios/$(uid)).data;
+      return exists(/databases/$(database)/documents/usuarios/$(uid))
+        && (
+          (target.get('role', '') == 'admin' && target.get('adminPrincipal', false) == true)
+          || (
+            (target.get('role', '') == 'admin_limited'
+              || (target.get('role', '') == 'admin' && target.get('adminPrincipal', false) == false))
+            && (
+              target.get('adminPermissions', {}).get('comunicacao', false) == true
+              || target.get('permissoes', {}).get('comunicacao', false) == true
+            )
+          )
+        );
+    }
+
+    function canReceiveChatAdmin(uid) {
+      let target = get(/databases/$(database)/documents/usuarios/$(uid)).data;
+      return exists(/databases/$(database)/documents/usuarios/$(uid))
+        && (
+          (target.get('role', '') == 'admin' && target.get('adminPrincipal', false) == true)
+          || (
+            (target.get('role', '') == 'admin_limited'
+              || (target.get('role', '') == 'admin' && target.get('adminPrincipal', false) == false))
+            && (
+              target.get('adminPermissions', {}).get('chats', false) == true
+              || target.get('permissoes', {}).get('chats', false) == true
+            )
+          )
+        );
+    }
+
+    function keepsProtectedUserFields() {
+      return !request.resource.data
+        .diff(resource.data)
+        .affectedKeys()
+        .hasAny([
+          'role',
+          'adminPrincipal',
+          'adminPermissions',
+          'permissoes'
+        ]);
+    }
+
+    // V11.0.2 - CENTRAL DE CONVERSAS
+    function conversationDoc(conversationId) {
+      return get(/databases/$(database)/documents/conversas/$(conversationId)).data;
+    }
+
+    function isConversationMember(conversationId) {
+      return logged() && request.auth.uid in conversationDoc(conversationId).get('participanteIds', []);
+    }
+
+    function isConversationModerator(conversationId) {
+      return logged() && request.auth.uid in conversationDoc(conversationId).get('moderadorIds', []);
+    }
+
+    function isPrivateConversation(conversationId) {
+      return conversationDoc(conversationId).get('tipo', '') == 'privado';
+    }
+
+    function validPrivateConversationCreate() {
+      return logged()
+        && request.resource.data.get('tipo', '') == 'privado'
+        && request.resource.data.get('participanteIds', []) is list
+        && request.resource.data.get('participanteIds', []).size() == 2
+        && request.auth.uid in request.resource.data.get('participanteIds', [])
+        && request.resource.data.get('moderadorIds', []) is list
+        && request.resource.data.get('moderadorIds', []).size() == 0;
+    }
+
+    function conversationOperationalFieldsOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'ultimaMensagem', 'ultimaMensagemPor', 'ultimaMensagemEm', 'atualizadoEm'
+      ]);
+    }
+
+    // USUÁRIOS
+    match /usuarios/{uid} {
+      allow read: if logged();
+
+      allow create: if logged()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'member';
+
+      allow update:
+        if isPrincipalAdmin()
+        || (
+          logged()
+          && request.auth.uid == uid
+          && keepsProtectedUserFields()
+        )
+        || (
+          hasPermission('membros')
+          && keepsProtectedUserFields()
+        );
+
+      allow delete: if isPrincipalAdmin();
+    }
+
+    // COMUNICAÇÃO PRIVADA LEGADA
+    match /mensagens/{id} {
+      allow create: if logged()
+        && request.resource.data.autorId == request.auth.uid;
+
+      allow read: if canMessages()
+        || (
+          logged()
+          && resource.data.autorId == request.auth.uid
+        );
+
+      allow update, delete: if canMessages();
+    }
+
+    // NOTIFICAÇÕES
+    match /notificacoes/{id} {
+      allow read: if logged()
+        && (
+          resource.data.destinatarioId == request.auth.uid
+          || isPrincipalAdmin()
+          || hasPermission('notificacoes')
+        );
+
+      // Cada tipo de notificação é autorizado pelo fluxo real que o utiliza.
+      // Confirmação: remetente e destinatário precisam estar inscritos no encontro exato.
+      allow create: if logged()
+        && request.resource.data.remetenteId == request.auth.uid
+        && request.resource.data.destinatarioId is string
+        && request.resource.data.destinatarioId != request.auth.uid
+        && (
+          (
+            request.resource.data.tipo == 'confirmacao_escala'
+            && request.resource.data.refId is string
+            && request.resource.data.escalaId == request.resource.data.refId
+            && request.resource.data.encontroId is string
+            && isEncounterParticipant(request.resource.data.escalaId, request.resource.data.encontroId, request.auth.uid)
+            && isEncounterParticipant(request.resource.data.escalaId, request.resource.data.encontroId, request.resource.data.destinatarioId)
+          )
+          || (
+            request.resource.data.tipo == 'chat_escala'
+            && request.resource.data.refId is string
+            && exists(/databases/$(database)/documents/escalas/$(request.resource.data.refId))
+            && (isScaleMember(request.resource.data.refId) || hasPermission('chats'))
+            && (
+              request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.get('integranteIds', [])
+              || canReceiveChatAdmin(request.resource.data.destinatarioId)
+            )
+          )
+          || (
+            request.resource.data.tipo == 'escala'
+            && hasPermission('escalas')
+            && request.resource.data.refId is string
+            && exists(/databases/$(database)/documents/escalas/$(request.resource.data.refId))
+            && request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.get('integranteIds', [])
+          )
+          || (
+            request.resource.data.tipo == 'conversa'
+            && request.resource.data.refId is string
+            && isConversationMember(request.resource.data.refId)
+            && request.resource.data.destinatarioId in conversationDoc(request.resource.data.refId).get('participanteIds', [])
+          )
+          || (
+            request.resource.data.tipo == 'mensagem'
+            && !hasPermission('comunicacao')
+            && canReceiveCommunicationAdmin(request.resource.data.destinatarioId)
+          )
+          || (
+            request.resource.data.tipo == 'oracao'
+            && exists(/databases/$(database)/documents/usuarios/$(request.resource.data.destinatarioId))
+          )
+        );
+
+      // O destinatário só pode alterar os campos de leitura da própria notificação.
+      allow update: if logged()
+        && resource.data.destinatarioId == request.auth.uid
+        && request.resource.data.destinatarioId == resource.data.destinatarioId
+        && request.resource.data.remetenteId == resource.data.remetenteId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lida', 'lidaEm']);
+
+      allow delete: if isPrincipalAdmin()
+        || hasPermission('notificacoes');
+    }
+
+    // ESCALAS
+    match /escalas/{escalaId} {
+      allow read: if logged();
+
+      allow create, update, delete:
+        if hasPermission('escalas');
+
+      // Índice de encontros mantido pelo gestor para reconciliar vínculos removidos.
+      match /encontros/{encontroId} {
+        allow read: if hasPermission('escalas');
+        allow create, update, delete: if hasPermission('escalas');
+      }
+
+      // Associação normalizada: prova a participação no encontro exato.
+      match /encontros/{encontroId}/participantes/{uid} {
+        allow read: if hasPermission('escalas')
+          || (logged() && request.auth.uid == uid);
+        allow create, update: if hasPermission('escalas')
+          && request.resource.data.uid == uid
+          && request.resource.data.escalaId == escalaId
+          && request.resource.data.encontroId == encontroId;
+        allow delete: if hasPermission('escalas');
+      }
+
+      // Registros legados permanecem disponíveis somente aos gestores para migração/sincronização.
+      match /confirmacoes/{uid} {
+        allow read: if hasPermission('escalas');
+        allow create, update: if false;
+        allow delete: if hasPermission('escalas');
+      }
+
+      // Respostas novas ficam isoladas no encontro correspondente.
+      match /encontros/{encontroId}/confirmacoes/{uid} {
+        allow read: if hasPermission('escalas')
+          || isEncounterParticipant(escalaId, encontroId, request.auth.uid);
+
+        allow create, update: if validEncounterConfirmationData(escalaId, encontroId, uid)
+          && canWriteEncounterConfirmation(escalaId, encontroId, uid);
+
+        allow delete: if hasPermission('escalas');
+      }
+
+      // Chat de escala legado - preservado na V11.
+      match /chat/{msgId} {
+        allow read: if hasPermission('chats')
+          || isScaleMember(escalaId);
+
+        allow create: if (
+            hasPermission('chats')
+            ||
+            isScaleMember(escalaId)
+          )
+          && request.resource.data.autorId == request.auth.uid;
+
+        allow delete: if hasPermission('chats')
+          || (
+            logged()
+            && resource.data.autorId == request.auth.uid
+          );
+
+        allow update: if false;
+      }
+
+      // V11.4.7 - Reações do Chat das Escalas.
+      match /chat_reacoes/{reacaoId} {
+        allow read: if hasPermission('chats') || hasPermission('escalas') || isScaleMember(escalaId);
+        allow create, update: if (hasPermission('chats') || hasPermission('escalas') || isScaleMember(escalaId))
+          && request.resource.data.usuarioId == request.auth.uid
+          && request.resource.data.mensagemId is string
+          && request.resource.data.emoji is string
+          && reacaoId == request.resource.data.mensagemId + '_' + request.auth.uid
+          && (!exists(/databases/$(database)/documents/escalas/$(escalaId)/chat_reacoes/$(reacaoId))
+              || resource.data.usuarioId == request.auth.uid);
+        allow delete: if (logged() && resource.data.usuarioId == request.auth.uid)
+          || hasPermission('chats') || hasPermission('escalas');
+      }
+
+      // Mensagem fixada, editável apenas pelos responsáveis autorizados.
+      match /chat_config/{configId} {
+        allow read: if hasPermission('chats') || hasPermission('escalas') || isScaleMember(escalaId);
+        allow create, update, delete: if configId == 'fixada'
+          && (hasPermission('chats') || hasPermission('escalas'));
+      }
+    }
+
+    // V11.0.2 - CENTRAL DE CONVERSAS
+    match /conversas/{conversaId} {
+      // Consultas da Central usam array-contains em participanteIds. A regra de
+      // listagem precisa depender do próprio resource para que o Firestore possa
+      // provar que todos os documentos retornados pertencem ao usuário.
+      allow list: if logged()
+        && request.auth.uid in resource.data.get('participanteIds', []);
+
+      // Leitura direta: participante sempre pode abrir. Administradores de chat
+      // podem abrir grupos/Chat Geral para gerenciar participantes, mas não
+      // ganham acesso automático a conversas privadas de terceiros.
+      allow get: if logged()
+        && (
+          request.auth.uid in resource.data.get('participanteIds', [])
+          || (
+            resource.data.get('tipo', '') != 'privado'
+            && (isPrincipalAdmin() || hasPermission('chats'))
+          )
+        );
+
+      allow create: if (
+          (isPrincipalAdmin() || hasPermission('chats'))
+          && request.resource.data.get('tipo', '') in ['geral', 'grupo']
+        ) || validPrivateConversationCreate();
+
+      allow update: if (
+          isConversationMember(conversaId)
+          && conversationOperationalFieldsOnly()
+        ) || (
+          !isPrivateConversation(conversaId)
+          && (isPrincipalAdmin() || hasPermission('chats'))
+        );
+
+      allow delete: if !isPrivateConversation(conversaId)
+        && (isPrincipalAdmin() || hasPermission('chats'));
+
+      match /mensagens/{msgId} {
+        allow read: if isConversationMember(conversaId);
+        allow create: if isConversationMember(conversaId)
+          && request.resource.data.autorId == request.auth.uid;
+        allow update: if false;
+        allow delete: if (logged() && resource.data.autorId == request.auth.uid)
+          || (!isPrivateConversation(conversaId) && (isPrincipalAdmin() || hasPermission('chats') || isConversationModerator(conversaId)));
+      }
+
+      match /leituras/{uid} {
+        allow read: if isConversationMember(conversaId);
+        allow create, update: if logged() && request.auth.uid == uid && isConversationMember(conversaId)
+          && request.resource.data.usuarioId == request.auth.uid;
+        allow delete: if (logged() && request.auth.uid == uid)
+          || (!isPrivateConversation(conversaId) && (isPrincipalAdmin() || hasPermission('chats')));
+      }
+
+      match /reacoes/{reacaoId} {
+        allow read: if isConversationMember(conversaId);
+        allow create, update: if isConversationMember(conversaId)
+          && request.resource.data.usuarioId == request.auth.uid;
+        allow delete: if (isConversationMember(conversaId)
+          && resource.data.usuarioId == request.auth.uid)
+          || (!isPrivateConversation(conversaId) && (isPrincipalAdmin() || hasPermission('chats')));
+      }
+    }
+
+    // AGENDA
+    match /agenda/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if hasPermission('agenda');
+    }
+
+    // REPERTÓRIOS
+    match /repertorios/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if hasPermission('repertorios');
+    }
+
+    // MÚSICAS
+    match /musicas/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if hasPermission('musicas');
+    }
+
+    // CIFRAS
+    match /cifras/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if hasPermission('cifras');
+    }
+
+    // AVISOS
+    match /avisos/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if hasPermission('avisos');
+    }
+
+    // MULTITRACKS
+    match /multitracks/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if hasPermission('multitracks');
+    }
+
+    // Mantidos apenas por compatibilidade
+    match /arquivos/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if isPrincipalAdmin();
+    }
+
+    match /links/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if isPrincipalAdmin();
+    }
+
+    match /membros/{id} {
+      allow read: if logged();
+      allow create, update, delete:
+        if hasPermission('membros');
+    }
+
+    // ORAÇÃO
+    match /oracoes/{id} {
+      allow read: if logged();
+
+      allow create: if logged()
+        && request.resource.data.usuarioId == request.auth.uid;
+
+      allow update: if logged()
+        && resource.data.usuarioId == request.auth.uid
+        && request.resource.data.usuarioId == request.auth.uid;
+
+      allow delete:
+        if isPrincipalAdmin()
+        || hasPermission('oracoes');
+    }
+
+    // CONFIGURAÇÕES GERAIS
+    match /configuracoes/{id} {
+      allow read: if logged();
+
+      allow create, update, delete:
+        if isPrincipalAdmin();
+    }
+  }
+}
