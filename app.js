@@ -1143,21 +1143,46 @@ function mvlShowReactionUsers(reactions,emoji){
   const overlay=document.createElement('div');overlay.id='mvl-reactions-overlay';overlay.className='mvl-reactions-overlay';
   overlay.innerHTML=`<div class="mvl-reactions-dialog" role="dialog" aria-modal="true" aria-label="Quem reagiu"><div class="mvl-reactions-header"><strong>${escapeHtml(emoji)} Quem reagiu</strong><button type="button" class="mvl-reactions-close" aria-label="Fechar">✕</button></div>${filtered.map(r=>{const u=usersCache.find(x=>x.id===r.usuarioId)||{nome:userName(r.usuarioId)};return `<div class="mvl-reactions-person">${memberAvatarHtml(u,'mvl-reaction-avatar')}<span>${escapeHtml(u.nome||u.email||'Integrante')}</span><b>${escapeHtml(r.emoji||'')}</b></div>`;}).join('')}</div>`;
   overlay.onclick=e=>{if(e.target===overlay||e.target.closest('.mvl-reactions-close'))overlay.remove();};
-  document.body.appendChild(overlay);overlay.querySelector('.mvl-reactions-close').focus();
-}
-async function loadMessages(){const all=await safeDocs('mensagens'),visible=(canManage('comunicacao')?all:all.filter(m=>m.autorId===currentUser.uid)).sort(byCreatedDesc);listEl.innerHTML='';if(!visible.length){listEl.innerHTML='<div class="empty">Nenhuma mensagem ainda.</div>';return;}visible.forEach(m=>{const card=document.createElement('div');card.className='item-card';card.innerHTML=`<span class="status-pill ${m.status==='nova'?'new':m.status==='resolvida'?'done':''}">${escapeHtml(m.status||'nova')}</span><h3>${escapeHtml(m.tipo||'Mensagem')}</h3>${canManage('comunicacao')?`<div class="item-meta"><b>De:</b> ${escapeHtml(m.autorNome||m.autorEmail||'')}</div>`:''}<div class="item-meta">${escapeHtml(m.mensagem||'')}</div>${canManage('comunicacao')?'<div class="item-actions"><button class="edit-btn">Marcar lida</button><button class="confirm-btn">Resolvida</button><button class="delete-btn msg-delete">Excluir</button></div>':''}`;if(canManage('comunicacao')){card.querySelector('.edit-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'lida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.confirm-btn').onclick=async()=>{await updateDoc(doc(db,'mensagens',m.id),{status:'resolvida',atualizadoEm:serverTimestamp()});loadMessages();};card.querySelector('.msg-delete').onclick=async()=>{if(confirm('Excluir esta mensagem privada?')){await deleteDoc(doc(db,'mensagens',m.id));loadMessages();}};}listEl.appendChild(card);});}
-
-// NOTIFICAÇÕES INTERNAS: 1 DOCUMENTO POR DESTINATÁRIO
 async function createNotifications(recipientIds,title,message,type,refId='',metadata={}){
-  const ids=[...new Set(recipientIds)].filter(Boolean);if(!ids.length)return;
-  const batch=writeBatch(db);
-  ids.forEach(uid=>{
-    const ref=doc(collection(db,'notificacoes'));
-    batch.set(ref,{destinatarioId:uid,remetenteId:currentUser.uid,titulo:title,mensagem:message,tipo,refId,...metadata,lida:false,criadoEm:serverTimestamp()});
+  if(!currentUser?.uid)throw new Error('Usuário não autenticado para criar notificações.');
+  const ids=[...new Set((Array.isArray(recipientIds)?recipientIds:[])
+    .filter(uid=>typeof uid==='string'&&uid.trim())
+    .map(uid=>uid.trim()))]
+    .filter(uid=>uid!==currentUser.uid);
+  if(!ids.length)return {created:0};
+
+  const payloadFor=uid=>({
+    destinatarioId:uid,
+    remetenteId:currentUser.uid,
+    titulo:String(title||'MVL'),
+    mensagem:String(message||''),
+    tipo:String(type||'geral'),
+    refId:String(refId||''),
+    ...(metadata&&typeof metadata==='object'&&!Array.isArray(metadata)?metadata:{}),
+    lida:false,
+    criadoEm:serverTimestamp()
   });
-  await batch.commit();
+
+  // Firestore aceita no máximo 500 operações por lote; usamos margem de segurança.
+  for(let start=0;start<ids.length;start+=450){
+    const batch=writeBatch(db);
+    ids.slice(start,start+450).forEach(uid=>{
+      batch.set(doc(collection(db,'notificacoes')),payloadFor(uid));
+    });
+    try{
+      await batch.commit();
+    }catch(error){
+      console.error('createNotifications: falha ao gravar lote', {
+        code:error?.code||'unknown',
+        message:error?.message||String(error),
+        destinatarios:ids.length,
+        loteInicio:start
+      });
+      throw error;
+    }
+  }
+  return {created:ids.length};
 }
-function bindNotifications(){
   if(notifUnsub)notifUnsub();const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));notifUnsub=onSnapshot(q,snap=>{const relevant=snap.docs.map(d=>({id:d.id,...d.data()})),unread=relevant.filter(n=>n.lida!==true);$('notif-count').textContent=String(unread.length);$('notif-count').classList.toggle('hide',unread.length===0);for(const n of unread){if(!lastNotificationIds.has(n.id)){lastNotificationIds.add(n.id);if(document.visibilityState==='visible')maybeBrowserNotify(n);}}},e=>console.error('notifications',e));
 }
 function maybeBrowserNotify(n){if(!('Notification'in window)||Notification.permission!=='granted')return;try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}}
