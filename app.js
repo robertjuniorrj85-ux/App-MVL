@@ -744,7 +744,7 @@ async function setEncounterConfirmation(scale,encounterId,status){
 
   let notificacaoInternaOk=true;
   try{
-    await createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId});
+    await createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId:encounterId});
   }catch(e){
     notificacaoInternaOk=false;
     console.error('Falha ao criar notificações internas da confirmação:',e);
