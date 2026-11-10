@@ -737,7 +737,7 @@ async function setEncounterConfirmation(scale,encounterId,status){
 
   let mensagem=status==='confirmado'?'Presença registrada neste encontro.':'Resposta registrada neste encontro.';
   if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas.';
-  if(!sincronizacao?.registroOk)mensagem+=' O serviço de notificações não confirmou o processamento.';
+  if(!sincronizacao?.registroOk)mensagem+=' O serviço de notificações não confirmou o processamento: '+(sincronizacao.erro||sincronizacao.pushErro||'erro não informado pelo servidor')+'.';
   else if(!sincronizacao.pushAceito)mensagem+=' O registro foi processado, mas o push não foi aceito: '+(sincronizacao.pushErro||'nenhuma inscrição válida encontrada')+'.';
   alert(mensagem);
   renderScales().catch(e=>console.error('Falha ao atualizar a lista de escalas:',e));
