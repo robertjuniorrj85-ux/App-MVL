@@ -1,0 +1,13 @@
+{
+  "firestore": {
+    "rules": "FIRESTORE_RULES_V9_3_PROPOSTA.txt"
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8080
+    },
+    "ui": {
+      "enabled": false
+    }
+  }
+}
