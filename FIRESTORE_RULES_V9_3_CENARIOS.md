@@ -10,14 +10,15 @@ O documento principal `escalas/{escalaId}` continua mantendo o campo `encontros`
 
 O documento de índice do encontro contém `id`, `nome`, `data` e `horario`. A subcoleção `participantes` contém documentos com `uid`, `escalaId`, `encontroId` e `atualizadoEm`; o ID do documento é o UID do integrante.
 
-A sincronização é executada pelo fluxo administrativo de salvar/editar a escala. Ao abrir a área de escalas com permissão de gestão, a aplicação também reconcilia as escalas existentes: cria/atualiza somente índices de encontro divergentes, cria vínculos ausentes, remove participantes que já não constam naquele encontro e limpa subcoleções de encontros removidos. A rotina não altera os documentos de escala nem as confirmações existentes.
+A sincronização é executada pelo fluxo administrativo de salvar/editar a escala. Ao abrir a área de escalas com permissão de gestão, a aplicação também reconcilia as escalas existentes: cria/atualiza somente índices de encontro divergentes, cria vínculos ausentes, migra confirmações legadas sem sobrescrever respostas já migradas, remove participantes que já não constam naquele encontro e limpa subcoleções de encontros removidos. A rotina não altera os documentos de escala nem as confirmações existentes.
 
 ## Matriz de cenários
 
 | Cenário | Resultado esperado | Controle |
 |---|---|---|
 | Gestor autorizado cria/edita escala | Permitir sincronizar vínculos de participantes por encontro | `hasPermission('escalas')`; campos de vínculo conferidos |
-| Integrante pertence ao encontro | Permitir consultar o próprio vínculo | UID do documento igual ao UID autenticado |
+| Integrante pertence ao encontro | Permitir consultar somente confirmações do encontro correspondente | Vínculo verificado em `participantes/{uid}` no caminho exato do encontro |
+| Integrante de outro encontro da escala | Negar leitura das confirmações alheias | Cada encontro possui subcoleção própria de confirmações; tela mostra apenas encontros do usuário |
 | Integrante confirma presença ou informa indisponibilidade | Permitir gravar a própria confirmação | UID autenticado igual ao documento; `encontroId` precisa apontar para vínculo existente no encontro exato |
 | Integrante tenta confirmar encontro do qual não participa | Negar | Ausência de `participantes/{uid}` para aquele `encontroId` |
 | Integrante cria notificação de confirmação para outro integrante do mesmo encontro | Permitir | Remetente e destinatário precisam ter vínculo no mesmo encontro |
@@ -35,7 +36,7 @@ A sincronização é executada pelo fluxo administrativo de salvar/editar a esca
 ## Compatibilidade e migração
 - O formato legado de `escalas/{id}.encontros` é mantido.
 - `integranteIds` no documento principal continua existindo para compatibilidade com consultas, chat e lembretes atuais.
-- Confirmações continuam no caminho `escalas/{escalaId}/confirmacoes/{uid}`; o campo `encontroId` identifica o encontro da operação que está sendo gravada.
+- Novas confirmações são gravadas em `escalas/{escalaId}/encontros/{encontroId}/confirmacoes/{uid}`. Registros antigos na coleção `confirmacoes` permanecem somente para gestores durante a migração.
 - Nenhuma confirmação ou escala é apagada pela rotina de sincronização.
 - A migração é progressiva: escalas existentes são reconciliadas quando um gestor com permissão abre a área de escalas ou salva uma escala. Antes dessa reconciliação, notificações/confirmacões que dependem do vínculo normalizado podem ser negadas. O gestor deve abrir a área e aguardar a sincronização antes de testar o fluxo.
 - A rotina não deve ser executada por integrantes comuns.
