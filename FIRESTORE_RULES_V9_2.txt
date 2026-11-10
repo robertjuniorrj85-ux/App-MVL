@@ -5,6 +5,13 @@ service cloud.firestore {
     function admin() { return logged() && get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.role == 'admin'; }
     function isScaleMember(scaleId) { return logged() && request.auth.uid in get(/databases/$(database)/documents/escalas/$(scaleId)).data.integranteIds; }
     function targetIsAdmin(uid) { return get(/databases/$(database)/documents/usuarios/$(uid)).data.role == 'admin'; }
+    function targetCanManageScales(uid) {
+      let target = get(/databases/$(database)/documents/usuarios/$(uid)).data;
+      return target.role == 'admin_limited' && (
+        target.get('permissoes', {}).get('escalas', false) == true ||
+        target.get('adminPermissions', {}).get('escalas', false) == true
+      );
+    }
 
     match /usuarios/{uid} {
       allow read: if logged();
@@ -23,7 +30,8 @@ service cloud.firestore {
       allow read: if logged() && resource.data.destinatarioId == request.auth.uid;
       allow create: if admin() || (logged() && request.resource.data.remetenteId == request.auth.uid && (
         targetIsAdmin(request.resource.data.destinatarioId) ||
-        (request.resource.data.tipo == 'chat_escala' && request.resource.data.refId is string && isScaleMember(request.resource.data.refId) && request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.integranteIds)
+        targetCanManageScales(request.resource.data.destinatarioId) ||
+        (request.resource.data.tipo in ['chat_escala', 'confirmacao_escala'] && request.resource.data.refId is string && isScaleMember(request.resource.data.refId) && request.resource.data.destinatarioId in get(/databases/$(database)/documents/escalas/$(request.resource.data.refId)).data.integranteIds)
       ));
       allow update: if logged() && resource.data.destinatarioId == request.auth.uid && request.resource.data.destinatarioId == resource.data.destinatarioId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lida','lidaEm']);
       allow delete: if admin();
