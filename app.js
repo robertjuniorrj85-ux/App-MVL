@@ -739,8 +739,13 @@ async function setEncounterConfirmation(scale,encounterId,status){
   // Resposta de integrante: notificação interna somente aos demais participantes
   // deste encontro. Administradores seguem no fluxo administrativo separado.
   const admins=adminIdsFor('escalas');
+  // Administradores (inclusive limitados) não recebem o fluxo de integrantes,
+  // mesmo que estejam cadastrados por engano como participantes do encontro.
+  const adminUids=new Set(usersCache
+    .filter(user=>user.role==='admin'||user.role==='admin_limited')
+    .map(user=>user.id));
   const destinatarios=[...new Set((enc?.integranteIds||[])
-    .filter(id=>typeof id==='string'&&id&&id!==currentUser.uid))];
+    .filter(id=>typeof id==='string'&&id&&id!==currentUser.uid&&!adminUids.has(id)))];
 
   let notificacaoInternaOk=true;
   try{
