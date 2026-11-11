@@ -1,4 +1,4 @@
-const CACHE='mvl-v11-4-20';
+const CACHE='mvl-v11-4-22';
 const STATIC=[
   './index.html?v=11.4.22',
   './styles.css?v=11.4.22',
