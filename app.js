@@ -106,7 +106,8 @@ function refreshEncounterMemberLists(){const team=$('scale-team')?.value||'mvl';
 async function syncAdminPermissionsForPush(){if(!isPrincipalAdmin||!currentUser)return false;try{const idToken=await currentUser.getIdToken();const admins=usersCache.filter(u=>(u.role==='admin'&&u.adminPrincipal!==true)||u.role==='admin_limited').map(u=>({uid:u.id,permissions:userPermissions(u)}));const r=await fetch(MVL_PUSH_ENDPOINT,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({idToken,tipo:'admin_perms_sync',admins})});const j=await r.json().catch(()=>({ok:false}));return !!j.ok;}catch(e){console.warn('admin_perms_sync',e);return false;}}
 
 const MVL_PUSH_ENDPOINT='https://script.google.com/macros/s/AKfycbwtNzufio5Gt_u9zrsMx-lMzei3o5dkFeaH_mE57TY04Yb3voX6IlOUSpS2HFcK_moD/exec';
-const MVL_VERSION='11.4.19';
+const MVL_VERSION='12.0';
+const GENERAL_CHAT_ID='mvl-chat-geral';
 const MVL_VOZES_DRIVE='https://drive.google.com/drive/folders/15NECgz_phUzjMxw4QINtwzy_C_leLAtu?usp=drive_link';
 const MVL_V10_MAX_PHOTO_BYTES=700*1024;
 let oneSignalSyncBound=false;
@@ -934,18 +935,21 @@ function conversationTitle(c={}){
   return u?.nome||u?.email||'Conversa privada';
 }
 function conversationCanModerate(c={}){return c.tipo!=='privado'&&(isPrincipalAdmin||canManage('chats'));}
-async function ensureGeneralConversation(){
-  if(!(isPrincipalAdmin||canManage('chats')))return;
-  const ref=doc(db,'conversas',GENERAL_CHAT_ID),snap=await getDoc(ref);
+async function ensureGeneralConversation(conversations=[]){
+  if(!(isPrincipalAdmin||canManage('chats')))return false;
+  const existing=conversations.find(c=>c.tipo==='geral');
+  const ref=existing?doc(db,'conversas',existing.id):doc(db,'conversas',GENERAL_CHAT_ID),snap=await getDoc(ref);
   if(!snap.exists()){
     await setDoc(ref,{nome:'Chat Geral',tipo:'geral',escopo:'personalizado',participanteIds:[currentUser.uid],moderadorIds:[currentUser.uid],configParticipantesV11:true,criadoPor:currentUser.uid,criadoEm:serverTimestamp(),atualizadoEm:serverTimestamp()});
-    return;
+    return true;
   }
   const c=snap.data();
   // Migra somente o Chat Geral automático da versão anterior, que incluía todos.
   if(c.escopo==='todos' && c.configParticipantesV11!==true){
     await updateDoc(ref,{escopo:'personalizado',participanteIds:[currentUser.uid],moderadorIds:[currentUser.uid],configParticipantesV11:true,atualizadoEm:serverTimestamp()});
+    return true;
   }
+  return false;
 }
 async function conversationUnreadCount(c){
   if(!c?.id||c.kind==='scale')return 0;
@@ -996,9 +1000,10 @@ async function renderConversations(){
   let convs=conversationCacheReady?[...conversationCache]:[];
   // Não bloqueia a abertura do Chat esperando todos os caches gerais.
   if(!usersCache.length||!scalesCache.length)await refreshCaches();
-  ensureGeneralConversation().catch(e=>console.error('Chat Geral',e));
   try{
     convs=await loadConversationCache({force:true});
+    const generalUpdated=await ensureGeneralConversation(convs);
+    if(generalUpdated)convs=await loadConversationCache({force:true});
   }catch(e){
     console.error('Falha ao carregar conversas',e);
     sectionSpecial.innerHTML=`<div class="empty">Não foi possível carregar as conversas${e?.code?` (${escapeHtml(e.code)})`:''}.</div>`;
@@ -1116,6 +1121,8 @@ function mvlShowReactionUsers(reactions,emoji){
   const overlay=document.createElement('div');overlay.id='mvl-reactions-overlay';overlay.className='mvl-reactions-overlay';
   overlay.innerHTML=`<div class="mvl-reactions-dialog" role="dialog" aria-modal="true" aria-label="Quem reagiu"><div class="mvl-reactions-header"><strong>${escapeHtml(emoji)} Quem reagiu</strong><button type="button" class="mvl-reactions-close" aria-label="Fechar">✕</button></div>${filtered.map(r=>{const u=usersCache.find(x=>x.id===r.usuarioId)||{nome:userName(r.usuarioId)};return `<div class="mvl-reactions-person">${memberAvatarHtml(u,'mvl-reaction-avatar')}<span>${escapeHtml(u.nome||u.email||'Integrante')}</span><b>${escapeHtml(r.emoji||'')}</b></div>`;}).join('')}</div>`;
   overlay.onclick=e=>{if(e.target===overlay||e.target.closest('.mvl-reactions-close'))overlay.remove();};
+  document.body.appendChild(overlay);overlay.querySelector('.mvl-reactions-close').focus();
+}
 async function createNotifications(recipientIds,title,message,type,refId='',metadata={}){
   if(!currentUser?.uid)throw new Error('Usuário não autenticado para criar notificações.');
   const ids=[...new Set((Array.isArray(recipientIds)?recipientIds:[])
@@ -1156,6 +1163,7 @@ async function createNotifications(recipientIds,title,message,type,refId='',meta
   }
   return {created:ids.length};
 }
+function bindNotifications(){
   if(notifUnsub)notifUnsub();const q=query(collection(db,'notificacoes'),where('destinatarioId','==',currentUser.uid));notifUnsub=onSnapshot(q,snap=>{const relevant=snap.docs.map(d=>({id:d.id,...d.data()})),unread=relevant.filter(n=>n.lida!==true);$('notif-count').textContent=String(unread.length);$('notif-count').classList.toggle('hide',unread.length===0);for(const n of unread){if(!lastNotificationIds.has(n.id)){lastNotificationIds.add(n.id);if(document.visibilityState==='visible')maybeBrowserNotify(n);}}},e=>console.error('notifications',e));
 }
 function maybeBrowserNotify(n){if(!('Notification'in window)||Notification.permission!=='granted')return;try{new Notification(n.titulo||'MVL',{body:n.mensagem||'',icon:'./mvl-icon-192-v4.png'});}catch{}}
@@ -1374,4 +1382,4 @@ async function changePasswordFromProfile(){const cur=$('current-pass').value,np=
 function showPasswordModal(){const modal=$('password-modal');modal.classList.remove('hide');$('salvar-nova-senha').onclick=async()=>{const n=$('nova-senha').value,c=$('confirma-senha').value,st=$('password-status');if(n.length<6){st.textContent='Use pelo menos 6 caracteres.';st.className='hint error';return;}if(n!==c){st.textContent='As senhas não coincidem.';st.className='hint error';return;}try{await updatePassword(currentUser,n);await setDoc(doc(db,'usuarios',currentUser.uid),{mustChangePassword:false},{merge:true});currentUserData.mustChangePassword=false;modal.classList.add('hide');}catch{st.textContent='Não foi possível alterar. Saia e entre novamente para tentar.';st.className='hint error';}};}
 
 // PWA
-let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=11.4.19').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
+let deferredPrompt=null;const installButtons=[...document.querySelectorAll('.install-trigger')];window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredPrompt=e;installButtons.forEach(b=>b.style.display='flex');});installButtons.forEach(btn=>btn.addEventListener('click',async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();await deferredPrompt.userChoice;deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');}));window.addEventListener('appinstalled',()=>{deferredPrompt=null;installButtons.forEach(b=>b.style.display='none');});if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('./service-worker.js?v=12.0').then(r=>r.update()).catch(e=>console.error('PWA SW',e)));}
