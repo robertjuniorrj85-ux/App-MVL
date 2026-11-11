@@ -623,7 +623,17 @@ async function saveScale(){
   saveBtn.disabled=true;try{if(editingId)await updateDoc(doc(db,'escalas',editingId),{...payload,atualizadoEm:serverTimestamp(),atualizadoPor:currentUser.uid});else{const ref=await addDoc(collection(db,'escalas'),{...payload,criadoEm:serverTimestamp(),criadoPor:currentUser.uid});scaleId=ref.id;}}catch(e){console.error('Falha ao salvar escala',e);alert('Não foi possível salvar a escala.');saveBtn.disabled=false;return;}
   alert('Escala salva com sucesso.');editingId=null;await refreshCaches();renderScales().catch(e=>console.error('Atualização da lista de escalas',e));saveBtn.disabled=false;
   const texto=`${evento} • ${userName(cantorId)} — ${dateBR(principal.data)}${principal.horario?' às '+principal.horario:''}.`;
-  if(notifyNow&&integranteIds.length){const tituloEscala=equipeResponsavel==='nova_geracao'?'⚡ Nova escala Nova Geração':'🎵 Nova escala MVL';const escalaUrl=`https://robertjuniorrj85-ux.github.io/App-MVL/?open=escala&id=${encodeURIComponent(scaleId)}`;createNotifications(integranteIds,tituloEscala,texto,'escala',scaleId).catch(e=>console.error('Notificação interna da escala',e));enviarPushMVL('escala',tituloEscala,texto,integranteIds,escalaUrl).catch(e=>console.error('Push da escala',e));}
+  if(notifyNow&&integranteIds.length){
+    const tituloEscala=equipeResponsavel==='nova_geracao'?'⚡ Nova escala Nova Geração':'🎵 Nova escala MVL';
+    const errosNotificacao=[];
+    try{await createNotifications(integranteIds,tituloEscala,texto,'escala',scaleId);}
+    catch(e){console.error('Notificação interna da escala',e);errosNotificacao.push('aviso dentro do app');}
+    try{
+      const pushOk=await enviarPushMVL('escala',tituloEscala,texto,integranteIds);
+      if(!pushOk)errosNotificacao.push('push para o celular');
+    }catch(e){console.error('Push da escala',e);errosNotificacao.push('push para o celular');}
+    if(errosNotificacao.length)alert('A escala foi salva, mas não foi possível enviar: '+errosNotificacao.join(' e ')+'.');
+  }
   syncScaleReminder({id:scaleId,...payload}).catch(e=>console.error('Sincronização de encontros/alertas',e));
 }
 async function syncAllScheduledData(){if(!canManage('escalas')&&!canManage('membros'))return;await syncBirthdaysForPush();for(const scale of scalesCache){await syncScaleReminder(scale);try{const snap=await getDocs(collection(db,'escalas',scale.id,'confirmacoes'));for(const d of snap.docs){const x=d.data();if(x?.usuarioId)await syncScaleConfirmationAsAdmin(scale.id,x.usuarioId,x.encontros||{},x.status||'');}}catch(e){console.warn('Confirmações para lembretes',scale.id,e);}}}
