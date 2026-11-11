@@ -711,11 +711,10 @@ async function buildScaleCard(s){
 }
 async function deleteScaleCascade(scaleId){const batch=writeBatch(db);const conf=await getDocs(collection(db,'escalas',scaleId,'confirmacoes')).catch(()=>null);conf?.docs.forEach(d=>batch.delete(d.ref));const chat=await getDocs(collection(db,'escalas',scaleId,'chat')).catch(()=>null);chat?.docs.forEach(d=>batch.delete(d.ref));batch.delete(doc(db,'escalas',scaleId));await batch.commit();syncScaleDelete(scaleId).catch(()=>{});}
 async function setEncounterConfirmation(scale,encounterId,status){
-  let data={};
   try{
     const ref=doc(db,'escalas',scale.id,'confirmacoes',currentUser.uid);
     const old=await getDoc(ref);
-    data=old.exists()?old.data():{};
+    const data=old.exists()?old.data():{};
     const encontros={...(data.encontros||{}),[encounterId]:status};
     await setDoc(ref,{
       usuarioId:currentUser.uid,
@@ -724,62 +723,24 @@ async function setEncounterConfirmation(scale,encounterId,status){
       encontros,
       atualizadoEm:serverTimestamp()
     },{merge:true});
-    data.encontros=encontros;
   }catch(e){
     console.error('Falha ao gravar confirmação no Firestore:',e);
     alert('Não foi possível registrar sua resposta. Verifique sua conexão e tente novamente.');
     return false;
   }
 
-  // A confirmação já está persistida. Falhas nas notificações não devem desfazer
-  // nem mascarar o registro principal.
   const enc=scaleEncounters(scale).find(e=>e.id===encounterId);
   const nome=currentUserData.nome||currentUser.email;
   const texto=`${nome} ${status==='confirmado'?'confirmou presença':'informou que não poderá participar'} em ${enc?.nome||scale.evento}.`;
-  // Resposta de integrante: notificação interna somente aos demais participantes
-  // deste encontro. Administradores seguem no fluxo administrativo separado.
   const admins=adminIdsFor('escalas');
-  const destinatarios=[...new Set((enc?.integranteIds||[])
-    .filter(id=>typeof id==='string'&&id&&id!==currentUser.uid))];
 
-  let notificacaoInternaOk=true;
-  try{
-    await createNotifications(destinatarios,'Resposta de escala',texto,'confirmacao_escala',scale.id,{escalaId:scale.id,encontroId:encounterId});
-  }catch(e){
-    notificacaoInternaOk=false;
-    console.error('Falha ao criar notificações internas da confirmação:',e);
+  // A confirmação já está no Firestore. O único aviso enviado é o push administrativo.
+  if(admins.length){
+    enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins)
+      .then(ok=>{if(!ok)console.warn('O push administrativo não foi confirmado.');})
+      .catch(e=>console.warn('Falha no push administrativo:',e));
   }
 
-  let sincronizacao={registroOk:false,pushAceito:false,erro:'Não foi possível consultar o serviço de notificações.'};
-  try{
-    sincronizacao=await syncScaleConfirmation(scale.id,data.encontros||{},encounterId,status);
-  }catch(e){
-    sincronizacao={registroOk:false,pushAceito:false,erro:String(e)};
-    console.error('Falha ao sincronizar confirmação com o Apps Script:',e);
-  }
-
-  // Fluxo independente: notifica somente os demais integrantes deste encontro.
-  let pushIntegrantes={ok:false,pushAceito:false,erro:'Notificação dos integrantes não confirmada.'};
-  try{
-    pushIntegrantes=await syncScaleMembersConfirmationPush(scale.id,encounterId,status,nome);
-  }catch(e){
-    console.error('Falha no push dos integrantes:',e);
-  }
-
-  // Mantém o fluxo administrativo original, separado do aviso aos integrantes.
-  // O Apps Script determina os administradores autorizados e exclui o remetente.
-  let pushFallbackOk=true;
-  if(!sincronizacao?.pushAceito&&admins.length){
-    pushFallbackOk=await enviarPushMVL('confirmacao_admin','Resposta de escala',texto,admins);
-    if(!pushFallbackOk)console.error('O envio de push administrativo também falhou.');
-  }
-
-  let mensagem=status==='confirmado'?'Presença registrada neste encontro.':'Resposta registrada neste encontro.';
-  if(!notificacaoInternaOk)mensagem+=' Porém, não foi possível criar as notificações internas. Consulte o console para o código técnico do Firestore.';
-  if(!sincronizacao?.registroOk)mensagem+=' O serviço de sincronização não confirmou o registro: '+(sincronizacao.erro||sincronizacao.pushErro||'erro não informado pelo servidor')+'.';
-  if(!pushIntegrantes?.pushAceito)mensagem+=' O push aos demais integrantes não foi confirmado: '+(pushIntegrantes.erro||'erro não informado')+'.';
-  if(!sincronizacao?.pushAceito&&!pushFallbackOk)mensagem+=' O envio de push ao administrador também não foi confirmado.';
-  alert(mensagem);
   renderScales().catch(e=>console.error('Falha ao atualizar a lista de escalas:',e));
   return true;
 }
